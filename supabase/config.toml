@@ -1,0 +1,24 @@
+# Supabase CLI project configuration.
+#
+# verify_jwt = false on every function below is important: by default,
+# Supabase's edge gateway requires a valid *Supabase-issued* JWT before a
+# request even reaches your code. This app uses its own login system
+# (bcrypt password hashes + our own JWT_SECRET), not Supabase Auth, so that
+# gate would block every request - including the very first register/login
+# call, which obviously has no token yet. Disabling it here hands auth
+# entirely to each function's own requireAuth() check instead.
+
+[functions.auth]
+verify_jwt = false
+
+[functions.teacher]
+verify_jwt = false
+
+[functions.student]
+verify_jwt = false
+
+[functions.admin]
+verify_jwt = false
+
+[functions.wall]
+verify_jwt = false
