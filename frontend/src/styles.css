@@ -21,6 +21,7 @@ body {
   background-image: repeating-linear-gradient(var(--board-line) 0 1px, transparent 1px 100%);
   color: var(--chalk);
   font-family: var(--sans);
+  font-size: 20px;
   min-height: 100vh;
 }
 
@@ -37,7 +38,7 @@ h1, h2, h3 {
   font-family: var(--mono);
   text-transform: uppercase;
   letter-spacing: 0.15em;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--accent);
   margin-bottom: 4px;
   display: block;
@@ -63,7 +64,7 @@ button, .btn {
   cursor: pointer;
   background: var(--accent);
   color: #1c1204;
-  font-size: 14px;
+  font-size: 16px;
 }
 button.secondary { background: transparent; color: var(--chalk); border: 1px solid var(--board-line); }
 button.danger { background: var(--danger); color: var(--chalk); }
@@ -71,7 +72,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 input, select, textarea {
   font-family: var(--sans);
-  font-size: 14px;
+  font-size: 16px;
   padding: 10px 12px;
   border-radius: var(--radius);
   border: 1px solid var(--board-line);
@@ -98,7 +99,7 @@ input[type="checkbox"] {
 input[type="checkbox"] { border-radius: 3px; }
 
 .field { margin-bottom: 14px; }
-.field label { display: block; font-size: 13px; color: var(--accent); margin-bottom: 4px; }
+.field label { display: block; font-size: 15px; color: var(--accent); margin-bottom: 4px; }
 
 .error-banner {
   background: rgba(164, 67, 47, 0.2);
@@ -107,7 +108,7 @@ input[type="checkbox"] { border-radius: 3px; }
   padding: 10px 14px;
   border-radius: var(--radius);
   margin-bottom: 16px;
-  font-size: 14px;
+  font-size: 16px;
 }
 
 /* Hall ticket: how each MCQ paper appears on the landing page */
@@ -125,8 +126,8 @@ input[type="checkbox"] { border-radius: 3px; }
   box-shadow: 0 3px 0 rgba(0,0,0,0.25);
 }
 .ticket.done { border-left-color: var(--good); opacity: 0.85; }
-.ticket .subject { font-family: var(--serif); font-size: 20px; font-weight: 700; }
-.ticket .meta { font-family: var(--mono); font-size: 12px; opacity: 0.7; }
+.ticket .subject { font-family: var(--serif); font-size: 22px; font-weight: 700; }
+.ticket .meta { font-family: var(--mono); font-size: 14px; opacity: 0.7; }
 .ticket .score-stamp {
   font-family: var(--mono);
   font-weight: 700;
@@ -135,7 +136,7 @@ input[type="checkbox"] { border-radius: 3px; }
   width: 52px; height: 52px;
   display: flex; align-items: center; justify-content: center;
   transform: rotate(-8deg);
-  font-size: 13px;
+  font-size: 15px;
 }
 
 .card {
@@ -155,7 +156,7 @@ input[type="checkbox"] { border-radius: 3px; }
 }
 .question-block .q-text { font-weight: 600; margin-bottom: 10px; }
 .option-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
-.option-row label { color: var(--paper-ink); font-size: 14px; margin: 0; }
+.option-row label { color: var(--paper-ink); font-size: 16px; margin: 0; }
 
 table.scoreboard { width: 100%; border-collapse: collapse; font-family: var(--mono); }
 table.scoreboard th, table.scoreboard td {
@@ -166,17 +167,17 @@ table.scoreboard th { color: var(--accent); font-weight: 600; }
 .avg-badge {
   display: inline-block;
   font-family: var(--mono);
-  font-size: 28px;
+  font-size: 30px;
   font-weight: 700;
   color: var(--accent);
 }
 
-.muted { opacity: 0.65; font-size: 13px; }
+.muted { opacity: 0.65; font-size: 15px; }
 
 .role-toggle { display: flex; gap: 10px; margin-bottom: 24px; }
 .role-toggle a {
   padding: 8px 16px; border: 1px solid var(--board-line); border-radius: var(--radius);
-  text-decoration: none; color: var(--chalk); font-family: var(--mono); font-size: 13px;
+  text-decoration: none; color: var(--chalk); font-family: var(--mono); font-size: 15px;
 }
 .role-toggle a.active { background: var(--accent); color: #1c1204; border-color: var(--accent); }
 
@@ -187,9 +188,9 @@ table.scoreboard th { color: var(--accent); font-weight: 600; }
 }
 .wall-post .post-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
 .wall-post .post-author { font-weight: 700; }
-.wall-post .post-meta { font-family: var(--mono); font-size: 11px; opacity: 0.65; }
+.wall-post .post-meta { font-family: var(--mono); font-size: 13px; opacity: 0.65; }
 .wall-post .post-body { margin: 8px 0; white-space: pre-wrap; }
-.wall-post .post-actions { display: flex; gap: 14px; font-size: 12px; }
+.wall-post .post-actions { display: flex; gap: 14px; font-size: 14px; }
 .wall-post .post-actions a { cursor: pointer; }
 .wall-reply {
   background: rgba(43,36,26,0.06); border-radius: var(--radius);
@@ -219,9 +220,9 @@ table.scoreboard td.avg-col { font-weight: 700; color: var(--accent); }
   display: flex; justify-content: space-between; align-items: center;
   padding: 14px 18px; cursor: pointer; gap: 12px;
 }
-.collapsible-head .subject { font-family: var(--serif); font-size: 18px; font-weight: 700; }
-.collapsible-head .meta { font-family: var(--mono); font-size: 12px; opacity: 0.7; }
-.collapsible-chevron { font-family: var(--mono); font-size: 16px; transition: transform 0.15s; }
+.collapsible-head .subject { font-family: var(--serif); font-size: 20px; font-weight: 700; }
+.collapsible-head .meta { font-family: var(--mono); font-size: 14px; opacity: 0.7; }
+.collapsible-chevron { font-family: var(--mono); font-size: 18px; transition: transform 0.15s; }
 .collapsible-chevron.open { transform: rotate(90deg); }
 .collapsible-body { padding: 0 18px 16px; border-top: 1px dashed rgba(43,36,26,0.2); }
 .collapsible-body .actions { display: flex; gap: 8px; flex-wrap: wrap; padding-top: 14px; }
@@ -240,3 +241,48 @@ table.scoreboard td.avg-col { font-weight: 700; color: var(--accent); }
 
 .match-row { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
 .match-row select { width: auto; flex: 1; }
+
+/* Login page: "LMS" wordmark + tagline, replacing "MCQ Test Hall / Welcome" */
+.lms-title {
+  font-size: 44px;
+  letter-spacing: 0.08em;
+  margin-bottom: 2px;
+}
+.lms-tagline {
+  font-family: var(--mono);
+  color: var(--accent);
+  opacity: 0.9;
+  margin: 0 0 22px;
+  font-size: 15px;
+}
+
+/* Teacher Dashboard: the three big top-level buttons (MCQ / Subject
+   Performance / Overall Performance) whose selection swaps the whole
+   screen area below them. Bigger and more prominent than .tabs, since
+   these are primary navigation, not a secondary in-page filter. */
+.main-nav { display: flex; gap: 10px; flex-wrap: wrap; margin: 24px 0 20px; }
+.main-nav button {
+  flex: 1;
+  min-width: 160px;
+  padding: 14px 16px;
+  font-size: 16px;
+  font-weight: 700;
+  background: transparent;
+  color: var(--chalk);
+  border: 1px solid var(--board-line);
+}
+.main-nav button.active { background: var(--accent); color: #1c1204; border-color: var(--accent); }
+
+/* Subject Performance: pick-a-subject step before the breakdown table. */
+.subject-picker { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
+.subject-picker button {
+  background: transparent;
+  color: var(--chalk);
+  border: 1px solid var(--board-line);
+  padding: 10px 18px;
+  font-size: 16px;
+}
+.subject-picker button.active { background: var(--accent); color: #1c1204; border-color: var(--accent); }
+
+/* Best performer on top of any performance table, gold highlight. */
+table.scoreboard tr.winner-row { background: rgba(193, 163, 90, 0.2); font-weight: 700; color: var(--accent); }

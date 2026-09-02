@@ -59,13 +59,16 @@ export default function Login() {
 
   return (
     <div className="app-shell" style={{ maxWidth: 420 }}>
-      <span className="eyebrow">MCQ Test Hall</span>
-      <h1>Welcome</h1>
-      <p className="muted">Pick your role, then log in or register.</p>
+      <h1 className="lms-title">LMS</h1>
+      <p className="lms-tagline">AI for better education</p>
 
       <div className="role-toggle">
         <a className={role === "teacher" ? "active" : ""} onClick={() => { setRole("teacher"); setNotice(""); }}>Teacher</a>
         <a className={role === "student" ? "active" : ""} onClick={() => { setRole("student"); setNotice(""); }}>Student</a>
+        <a onClick={() => navigate("/admin")}>Admin</a>
+      </div>
+
+      <div className="role-toggle" style={{ marginTop: 4 }}>
         <a
           className={mode === "register" ? "active" : ""}
           onClick={() => { setMode(mode === "login" ? "register" : "login"); setNotice(""); }}

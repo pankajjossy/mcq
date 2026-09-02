@@ -66,7 +66,7 @@ Deno.serve(async (req: Request) => {
 
 async function activePapers(pool: ReturnType<typeof getPool>, studentId: number) {
   const today = await pool.query(
-    `SELECT ms.id, ms.subject, ms.semester, ms.title, ms.opened_at
+    `SELECT ms.id, ms.subject, ms.topic, ms.semester, ms.title, ms.opened_at
      FROM mcq_sets ms
      WHERE ms.status = 'live'
        AND ms.opened_at > now() - interval '${EXAM_HALL_MINUTES} minutes'
@@ -78,7 +78,7 @@ async function activePapers(pool: ReturnType<typeof getPool>, studentId: number)
   );
 
   const archive = await pool.query(
-    `SELECT ms.id, ms.subject, ms.semester, ms.title, a.score, a.total, a.submitted_at
+    `SELECT ms.id, ms.subject, ms.topic, ms.semester, ms.title, a.score, a.total, a.submitted_at
      FROM attempts a JOIN mcq_sets ms ON ms.id = a.mcq_set_id
      WHERE a.student_id = $1
      ORDER BY a.submitted_at DESC`,
@@ -90,7 +90,7 @@ async function activePapers(pool: ReturnType<typeof getPool>, studentId: number)
 
 async function getPaper(pool: ReturnType<typeof getPool>, setId: string, studentId: number) {
   const setResult = await pool.query(
-    `SELECT id, subject, semester, title, teacher_id FROM mcq_sets
+    `SELECT id, subject, topic, semester, title, teacher_id FROM mcq_sets
      WHERE id=$1 AND status='live' AND opened_at > now() - interval '${EXAM_HALL_MINUTES} minutes'`,
     [setId]
   );
@@ -219,7 +219,7 @@ async function review(pool: ReturnType<typeof getPool>, setId: string, studentId
   if (attemptResult.rowCount === 0) return json({ error: "You haven't attempted this paper." }, 404);
   const attempt = attemptResult.rows[0];
 
-  const setResult = await pool.query("SELECT subject, semester, title FROM mcq_sets WHERE id=$1", [setId]);
+  const setResult = await pool.query("SELECT subject, topic, semester, title FROM mcq_sets WHERE id=$1", [setId]);
   const questions = await pool.query(
     `SELECT q.id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d,
             q.correct_option, q.question_type, q.marks, q.match_pairs,
@@ -260,7 +260,7 @@ async function dashboard(pool: ReturnType<typeof getPool>, studentId: number) {
 
 async function activeShortPapers(pool: ReturnType<typeof getPool>, studentId: number) {
   const today = await pool.query(
-    `SELECT ss.id, ss.subject, ss.semester, ss.title, ss.opened_at
+    `SELECT ss.id, ss.subject, ss.topic, ss.semester, ss.title, ss.opened_at
      FROM short_sets ss
      WHERE ss.status = 'live'
        AND ss.opened_at > now() - interval '${EXAM_HALL_MINUTES} minutes'
@@ -272,7 +272,7 @@ async function activeShortPapers(pool: ReturnType<typeof getPool>, studentId: nu
   );
 
   const archive = await pool.query(
-    `SELECT ss.id, ss.subject, ss.title, a.score, a.total, a.submitted_at
+    `SELECT ss.id, ss.subject, ss.topic, ss.title, a.score, a.total, a.submitted_at
      FROM short_attempts a JOIN short_sets ss ON ss.id = a.short_set_id
      WHERE a.student_id = $1
      ORDER BY a.submitted_at DESC`,
@@ -284,7 +284,7 @@ async function activeShortPapers(pool: ReturnType<typeof getPool>, studentId: nu
 
 async function getShortPaper(pool: ReturnType<typeof getPool>, setId: string, studentId: number) {
   const setResult = await pool.query(
-    `SELECT id, subject, semester, title FROM short_sets
+    `SELECT id, subject, topic, semester, title FROM short_sets
      WHERE id=$1 AND status='live' AND opened_at > now() - interval '${EXAM_HALL_MINUTES} minutes'`,
     [setId]
   );

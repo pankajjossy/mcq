@@ -3,12 +3,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { api, getSession, clearSession } from "../api.js";
 import Collapsible from "../components/Collapsible.jsx";
 import PaperReview from "../components/PaperReview.jsx";
-
-function formatWhen(dateStr) {
-  const d = new Date(dateStr);
-  return d.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "2-digit" }) +
-    " " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-}
+import { toTitleCase, formatShort, paperLabel } from "../format.js";
 
 export default function TeacherDashboard() {
   const session = getSession();
@@ -16,7 +11,8 @@ export default function TeacherDashboard() {
   const [mcqSets, setMcqSets] = useState([]);
   const [shortSets, setShortSets] = useState([]);
   const [error, setError] = useState("");
-  const [tab, setTab] = useState("subjectwise");
+  // Three top-level buttons; the screen area below swaps between them.
+  const [mainTab, setMainTab] = useState("mcq");
 
   useEffect(() => {
     if (!session || session.role !== "teacher") return navigate("/");
@@ -50,12 +46,19 @@ export default function TeacherDashboard() {
     load();
   }
 
+  // Merged, newest first, regardless of MCQ-family vs short-answer - "MCQ"
+  // here means "your papers" in the everyday sense the teacher uses it.
+  const allPapers = [
+    ...mcqSets.map((s) => ({ ...s, kind: "mcq" })),
+    ...shortSets.map((s) => ({ ...s, kind: "short" })),
+  ].sort((a, b) => new Date(b.opened_at || b.created_at) - new Date(a.opened_at || a.created_at));
+
   return (
     <div className="app-shell">
       <div className="top-bar">
         <div>
           <span className="eyebrow">Teacher Dashboard</span>
-          <h1>{session?.user?.name}</h1>
+          <h1>{toTitleCase(session?.user?.name)}</h1>
         </div>
         <div style={{ display: "flex", gap: 10 }}>
           <Link className="btn secondary" to={`/wall/${session?.user?.id}`}>My Wall</Link>
@@ -66,25 +69,30 @@ export default function TeacherDashboard() {
       {error && <div className="error-banner">{error}</div>}
 
       <div style={{ display: "flex", gap: 10, marginBottom: 24 }}>
-        <Link className="btn" to="/teacher/build">+ New MCQ Paper</Link>
-        <Link className="btn secondary" to="/teacher/build-short">+ New Short-Answer Paper</Link>
+        <Link className="btn" to="/teacher/build">+ New Paper</Link>
       </div>
 
-      <h2>Your papers</h2>
-      {mcqSets.length === 0 && shortSets.length === 0 && <p className="muted">Nothing saved yet.</p>}
-
-      {mcqSets.map((s) => (
-        <McqRow key={`mcq-${s.id}`} set={s} onUpload={load} onDelete={deleteMcq} navigate={navigate} />
-      ))}
-      {shortSets.map((s) => (
-        <ShortRow key={`short-${s.id}`} set={s} onUpload={load} onDelete={deleteShort} navigate={navigate} />
-      ))}
-
-      <div className="tabs">
-        <button className={tab === "subjectwise" ? "active" : ""} onClick={() => setTab("subjectwise")}>Subject-wise performance</button>
-        <button className={tab === "overall" ? "active" : ""} onClick={() => setTab("overall")}>Overall performance</button>
+      <div className="main-nav">
+        <button className={mainTab === "mcq" ? "active" : ""} onClick={() => setMainTab("mcq")}>MCQ</button>
+        <button className={mainTab === "subject" ? "active" : ""} onClick={() => setMainTab("subject")}>Subject Performance</button>
+        <button className={mainTab === "overall" ? "active" : ""} onClick={() => setMainTab("overall")}>Overall Performance</button>
       </div>
-      {tab === "subjectwise" ? <ScorePivot /> : <OverallPerformance />}
+
+      {mainTab === "mcq" && (
+        <>
+          {allPapers.length === 0 && <p className="muted">Nothing saved yet.</p>}
+          {allPapers.map((s) =>
+            s.kind === "mcq" ? (
+              <McqRow key={`mcq-${s.id}`} set={s} onUpload={load} onDelete={deleteMcq} navigate={navigate} />
+            ) : (
+              <ShortRow key={`short-${s.id}`} set={s} onUpload={load} onDelete={deleteShort} navigate={navigate} />
+            )
+          )}
+        </>
+      )}
+
+      {mainTab === "subject" && <SubjectPerformance />}
+      {mainTab === "overall" && <OverallPerformance />}
     </div>
   );
 }
@@ -108,8 +116,8 @@ function McqRow({ set: s, onUpload, onDelete, navigate }) {
 
   return (
     <Collapsible
-      head={`${s.semester} ${s.subject}`}
-      meta={`${formatWhen(s.opened_at || s.created_at)} · status: ${s.status} · ${s.total_marks} marks`}
+      head={paperLabel(s.subject, s.topic)}
+      meta={`Sem ${s.semester} · ${formatShort(s.opened_at || s.created_at)} · status: ${s.status} · ${s.total_marks} marks`}
       done={s.status === "closed"}
     >
       <div className="actions">
@@ -148,8 +156,8 @@ function ShortRow({ set: s, onUpload, onDelete, navigate }) {
 
   return (
     <Collapsible
-      head={`${s.semester} ${s.subject} (short answer)`}
-      meta={`${formatWhen(s.opened_at || s.created_at)} · status: ${s.status}`}
+      head={`${paperLabel(s.subject, s.topic)} (short answer)`}
+      meta={`Sem ${s.semester} · ${formatShort(s.opened_at || s.created_at)} · status: ${s.status}`}
       done={s.status === "closed"}
     >
       <div className="actions">
@@ -175,11 +183,40 @@ function ShortRow({ set: s, onUpload, onDelete, navigate }) {
   );
 }
 
-// Avg column first, then one column per test - newest first, dated by
-// when that paper was uploaded.
-function ScorePivot() {
+// Shared: given the raw /teacher/scores/detailed feed, aggregate one row
+// per student, optionally scoped to a single subject, with a breakdown
+// column per key (topic when scoped to a subject, subject when overall).
+function aggregate(attempts, { subjectFilter, keyField }) {
+  const byStudent = new Map();
+  for (const a of attempts) {
+    if (subjectFilter && a.subject !== subjectFilter) continue;
+    const key = a.rollno;
+    if (!byStudent.has(key)) {
+      byStudent.set(key, { rollno: a.rollno, name: a.name, score: 0, total: 0, breakdown: {} });
+    }
+    const row = byStudent.get(key);
+    row.score += Number(a.score);
+    row.total += Number(a.total);
+    const bKey = a[keyField] || "—";
+    if (!row.breakdown[bKey]) row.breakdown[bKey] = { score: 0, total: 0 };
+    row.breakdown[bKey].score += Number(a.score);
+    row.breakdown[bKey].total += Number(a.total);
+  }
+  const rows = Array.from(byStudent.values()).map((r) => ({
+    ...r,
+    avg: r.total ? Math.round((100 * r.score) / r.total) : 0,
+  }));
+  // Best performer on top.
+  rows.sort((x, y) => y.avg - x.avg || y.score - x.score);
+  return rows;
+}
+
+// Button per subject the teacher has ever run a paper for -> pick one ->
+// avg (first) then a column per topic within that subject, best on top.
+function SubjectPerformance() {
   const [attempts, setAttempts] = useState([]);
   const [error, setError] = useState("");
+  const [subject, setSubject] = useState(null);
 
   useEffect(() => {
     api("/teacher/scores/detailed").then((d) => setAttempts(d.attempts)).catch((err) => setError(err.message));
@@ -188,57 +225,51 @@ function ScorePivot() {
   if (error) return <div className="error-banner">{error}</div>;
   if (attempts.length === 0) return <p className="muted">No attempts recorded yet.</p>;
 
-  const groups = {};
-  for (const a of attempts) {
-    const key = `${a.subject}|${a.semester}`;
-    (groups[key] ||= { subject: a.subject, semester: a.semester, tests: new Map(), students: new Map() }).tests.set(
-      a.mcq_set_id,
-      a.opened_at
-    );
-    const g = groups[key];
-    if (!g.students.has(a.rollno)) g.students.set(a.rollno, { name: a.name, byTest: {} });
-    g.students.get(a.rollno).byTest[a.mcq_set_id] = { score: a.score, total: a.total };
-  }
+  const subjects = [...new Set(attempts.map((a) => a.subject))].sort();
+  const activeSubject = subject || subjects[0];
+  const rows = aggregate(attempts, { subjectFilter: activeSubject, keyField: "topic" });
+  const topics = [...new Set(rows.flatMap((r) => Object.keys(r.breakdown)))].sort();
 
   return (
     <>
-      {Object.values(groups).map((g, gi) => {
-        const testIds = [...g.tests.entries()].sort((a, b) => new Date(b[1]) - new Date(a[1]));
-        return (
-          <div key={gi} style={{ marginBottom: 24 }}>
-            <h3>{g.semester} {g.subject}</h3>
-            <table className="scoreboard">
-              <thead>
-                <tr>
-                  <th>Roll</th><th>Name</th><th>Avg</th>
-                  {testIds.map(([id, openedAt]) => <th key={id}>{new Date(openedAt).toLocaleDateString()}</th>)}
-                </tr>
-              </thead>
-              <tbody>
-                {[...g.students.entries()].map(([rollno, s]) => {
-                  const attemptsForStudent = Object.values(s.byTest);
-                  const totalScore = attemptsForStudent.reduce((sum, a) => sum + Number(a.score), 0);
-                  const totalPossible = attemptsForStudent.reduce((sum, a) => sum + Number(a.total), 0);
-                  const avg = totalPossible ? Math.round((100 * totalScore) / totalPossible) : 0;
-                  return (
-                    <tr key={rollno}>
-                      <td>{rollno}</td><td>{s.name}</td><td className="avg-col">{avg}%</td>
-                      {testIds.map(([id]) => (
-                        <td key={id}>{s.byTest[id] ? `${s.byTest[id].score}/${s.byTest[id].total}` : "—"}</td>
-                      ))}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        );
-      })}
+      <div className="subject-picker">
+        {subjects.map((subj) => (
+          <button key={subj} className={activeSubject === subj ? "active" : ""} onClick={() => setSubject(subj)}>
+            {subj}
+          </button>
+        ))}
+      </div>
+
+      {rows.length === 0 ? (
+        <p className="muted">No attempts recorded yet for {activeSubject}.</p>
+      ) : (
+        <table className="scoreboard">
+          <thead>
+            <tr>
+              <th>Roll</th><th>Name</th><th>Avg</th>
+              {topics.map((t) => <th key={t}>{t}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={r.rollno} className={i === 0 ? "winner-row" : ""}>
+                <td>{r.rollno}</td>
+                <td>{toTitleCase(r.name)}</td>
+                <td className="avg-col">{r.avg}%</td>
+                {topics.map((t) => (
+                  <td key={t}>{r.breakdown[t] ? `${r.breakdown[t].score}/${r.breakdown[t].total}` : "—"}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </>
   );
 }
 
-// Every subject combined per student - one row, one avg, one paper count.
+// Every subject combined per student - avg first, then a column per
+// subject, best performer on top.
 function OverallPerformance() {
   const [attempts, setAttempts] = useState([]);
   const [error, setError] = useState("");
@@ -250,26 +281,26 @@ function OverallPerformance() {
   if (error) return <div className="error-banner">{error}</div>;
   if (attempts.length === 0) return <p className="muted">No attempts recorded yet.</p>;
 
-  const byStudent = {};
-  for (const a of attempts) {
-    if (!byStudent[a.rollno]) byStudent[a.rollno] = { name: a.name, score: 0, total: 0, papers: 0 };
-    byStudent[a.rollno].score += Number(a.score);
-    byStudent[a.rollno].total += Number(a.total);
-    byStudent[a.rollno].papers += 1;
-  }
+  const rows = aggregate(attempts, { subjectFilter: null, keyField: "subject" });
+  const subjects = [...new Set(rows.flatMap((r) => Object.keys(r.breakdown)))].sort();
 
   return (
     <table className="scoreboard">
       <thead>
-        <tr><th>Roll</th><th>Name</th><th>Avg</th><th>Papers Appeared</th><th>Total Score</th></tr>
+        <tr>
+          <th>Roll</th><th>Name</th><th>Avg</th>
+          {subjects.map((subj) => <th key={subj}>{subj}</th>)}
+        </tr>
       </thead>
       <tbody>
-        {Object.entries(byStudent).map(([rollno, s]) => (
-          <tr key={rollno}>
-            <td>{rollno}</td><td>{s.name}</td>
-            <td className="avg-col">{s.total ? Math.round((100 * s.score) / s.total) : 0}%</td>
-            <td>{s.papers}</td>
-            <td>{s.score}/{s.total}</td>
+        {rows.map((r, i) => (
+          <tr key={r.rollno} className={i === 0 ? "winner-row" : ""}>
+            <td>{r.rollno}</td>
+            <td>{toTitleCase(r.name)}</td>
+            <td className="avg-col">{r.avg}%</td>
+            {subjects.map((subj) => (
+              <td key={subj}>{r.breakdown[subj] ? `${r.breakdown[subj].score}/${r.breakdown[subj].total}` : "—"}</td>
+            ))}
           </tr>
         ))}
       </tbody>

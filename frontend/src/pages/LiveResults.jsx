@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { api } from "../api.js";
+import { toTitleCase } from "../format.js";
 
 export default function LiveResults({ kind = "mcq" }) {
   const { id } = useParams();
@@ -42,7 +43,7 @@ export default function LiveResults({ kind = "mcq" }) {
             <tr key={i}>
               <td>{i + 1}</td>
               <td>{r.rollno}</td>
-              <td>{r.name}</td>
+              <td>{toTitleCase(r.name)}</td>
               <td>{r.score}/{r.total}</td>
             </tr>
           ))}

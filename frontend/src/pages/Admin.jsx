@@ -56,7 +56,7 @@ function AdminLogin({ onLoggedIn }) {
 
   return (
     <div className="app-shell" style={{ maxWidth: 380 }}>
-      <span className="eyebrow">MCQ Test Hall</span>
+      <span className="eyebrow">LMS</span>
       <h1>Admin</h1>
       {error && <div className="error-banner">{error}</div>}
       <form onSubmit={submit} className="card">
@@ -88,7 +88,7 @@ function AdminPanel({ onLogout }) {
   return (
     <div className="app-shell">
       <div className="top-bar">
-        <span className="eyebrow">MCQ Test Hall — Admin</span>
+        <span className="eyebrow">LMS — Admin</span>
         <a onClick={onLogout} style={{ cursor: "pointer" }}>Log out</a>
       </div>
 

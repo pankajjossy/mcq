@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { api, getSession } from "../api.js";
 import PaperReview from "../components/PaperReview.jsx";
+import { toTitleCase } from "../format.js";
 
 export default function Wall() {
   const { teacherId } = useParams();
@@ -103,7 +104,7 @@ export default function Wall() {
         <div className="wall-post" key={p.id}>
           <div className="post-head">
             <div>
-              <span className="post-author">{p.author_name}</span>
+              <span className="post-author">{toTitleCase(p.author_name)}</span>
               {p.author_role === "teacher" && <span className="muted"> · teacher</span>}
               {p.mcq_subject && <span className="muted"> · re: {p.mcq_subject} test</span>}
             </div>
@@ -133,7 +134,7 @@ export default function Wall() {
             <div className="wall-reply" key={r.id}>
               <div className="post-head">
                 <div>
-                  <span className="post-author">{r.author_name}</span>
+                  <span className="post-author">{toTitleCase(r.author_name)}</span>
                   {r.author_role === "teacher" && <span className="muted"> · teacher</span>}
                 </div>
                 <span className="post-meta">{new Date(r.created_at).toLocaleString()}{r.updated_at ? " (edited)" : ""}</span>
