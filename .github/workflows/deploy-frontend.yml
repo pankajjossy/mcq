@@ -1,12 +1,10 @@
-```yaml
-# Builds the React/Vite frontend and publishes it to GitHub Pages
-# automatically on every push to main.
 name: Deploy frontend to GitHub Pages
 
 on:
   push:
-    branches: [main]
-  workflow_dispatch: {}
+    branches:
+      - main
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -43,7 +41,7 @@ jobs:
           VITE_SUPABASE_FUNCTIONS_URL: ${{ secrets.SUPABASE_FUNCTIONS_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
 
-      - name: Upload GitHub Pages artifact
+      - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: frontend/dist
@@ -60,4 +58,3 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-```
