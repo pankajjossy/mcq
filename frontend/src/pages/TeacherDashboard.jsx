@@ -46,8 +46,7 @@ export default function TeacherDashboard() {
     load();
   }
 
-  // Merged, newest first, regardless of MCQ-family vs short-answer - "MCQ"
-  // here means "your papers" in the everyday sense the teacher uses it.
+  // Merged, newest first, regardless of MCQ-family vs short-answer.
   const allPapers = [
     ...mcqSets.map((s) => ({ ...s, kind: "mcq" })),
     ...shortSets.map((s) => ({ ...s, kind: "short" })),
@@ -97,6 +96,7 @@ export default function TeacherDashboard() {
   );
 }
 
+// ─── MCQ paper row ────────────────────────────────────────────────────────────
 function McqRow({ set: s, onUpload, onDelete, navigate }) {
   const [paper, setPaper] = useState(null);
   const [editingLabel, setEditingLabel] = useState(false);
@@ -109,10 +109,10 @@ function McqRow({ set: s, onUpload, onDelete, navigate }) {
     await api(`/teacher/mcq/${s.id}/close`, { method: "POST" });
     navigate(`/teacher/live/${s.id}`);
   }
+  // Re-upload: creates a fresh "live" window with today's date/time as opened_at.
+  // Students who already submitted won't see it again (server excludes existing
+  // attempts). This is intentionally the same endpoint as first upload.
   async function reupload() {
-    // Same paper, back on the landing page for another 30 minutes - for
-    // students who missed it the first time. Students who already attempted
-    // it still won't see it again (the server excludes existing attempts).
     await api(`/teacher/mcq/${s.id}/upload`, { method: "POST" });
     onUpload();
   }
@@ -122,9 +122,23 @@ function McqRow({ set: s, onUpload, onDelete, navigate }) {
     setPaper(data);
   }
 
+  const headLabel = (
+    <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      {paperLabel(s.subject, s.topic)}
+      {/* Pencil icon triggers label editor without expanding the collapsible body */}
+      <button
+        className="icon-edit-btn"
+        title="Fix subject / topic typo"
+        onClick={(e) => { e.stopPropagation(); setEditingLabel(true); }}
+      >
+        ✏️
+      </button>
+    </span>
+  );
+
   return (
     <Collapsible
-      head={paperLabel(s.subject, s.topic)}
+      head={headLabel}
       meta={`Sem ${s.semester} · ${formatShort(s.opened_at || s.created_at)} · status: ${s.status} · ${s.total_marks} marks`}
       done={s.status === "closed"}
     >
@@ -136,80 +150,47 @@ function McqRow({ set: s, onUpload, onDelete, navigate }) {
           onCancel={() => setEditingLabel(false)}
         />
       ) : (
-        <div className="actions">
-          {s.status === "ready" && (
-            <>
-              <button onClick={upload}>Upload</button>
-              <button className="secondary" onClick={view}>{paper ? "Hide" : "View"}</button>
-              <button className="secondary" onClick={() => navigate(`/teacher/build/${s.id}`)}>Edit questions</button>
-            </>
-          )}
-          {s.status === "live" && <button onClick={closeAndShow}>Show Results</button>}
-          {s.status === "closed" && (
-            <>
-              <Link className="btn" to={`/teacher/live/${s.id}`}>View Results</Link>
-              <button className="secondary" onClick={reupload}>Re-upload</button>
-            </>
-          )}
-          {/* Correcting a typo'd subject/topic works at any status, and
-              re-groups this paper's already-recorded scores under the
-              corrected subject in Subject/Overall Performance. */}
-          <button className="secondary" onClick={() => setEditingLabel(true)}>Edit subject/topic</button>
-          <button className="danger" onClick={() => onDelete(s.id)}>Delete</button>
-        </div>
+        <>
+          <div className="actions">
+            {/* ── ready ── */}
+            {s.status === "ready" && (
+              <>
+                <button onClick={upload}>Upload</button>
+                <button className="secondary" onClick={view}>{paper ? "Hide" : "View MCQ"}</button>
+                <button className="secondary" onClick={() => navigate(`/teacher/build/${s.id}`)}>Edit Questions</button>
+              </>
+            )}
+
+            {/* ── live ── */}
+            {s.status === "live" && (
+              <>
+                <button onClick={closeAndShow}>Show Results</button>
+                <button className="secondary" onClick={view}>{paper ? "Hide" : "View MCQ"}</button>
+              </>
+            )}
+
+            {/* ── closed: all four actions the user asked for ── */}
+            {s.status === "closed" && (
+              <>
+                <button onClick={reupload}>Re-upload</button>
+                <Link className="btn secondary" to={`/teacher/live/${s.id}`}>View Results</Link>
+                <button className="secondary" onClick={view}>{paper ? "Hide" : "View MCQ"}</button>
+                <button className="secondary" onClick={() => navigate(`/teacher/build/${s.id}`)}>Edit MCQ</button>
+              </>
+            )}
+
+            {/* Always available: fix a subject/topic typo, then delete */}
+            <button className="secondary" onClick={() => setEditingLabel(true)}>Edit Subject/Topic</button>
+            <button className="danger" onClick={() => onDelete(s.id)}>Delete</button>
+          </div>
+          {paper && <div style={{ marginTop: 14 }}><PaperReview questions={paper.questions} /></div>}
+        </>
       )}
-      {paper && <div style={{ marginTop: 14 }}><PaperReview questions={paper.questions} /></div>}
     </Collapsible>
   );
 }
 
-// Small inline form for fixing a subject/topic/semester typo without
-// touching questions - works whether the paper is ready, live, or closed.
-function LabelEditor({ set: s, table, onDone, onCancel }) {
-  const [subject, setSubject] = useState(s.subject);
-  const [topic, setTopic] = useState(s.topic);
-  const [semester, setSemester] = useState(s.semester);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  async function save() {
-    setError("");
-    setBusy(true);
-    try {
-      await api(`/teacher/${table}/${s.id}/label`, { method: "PATCH", body: { subject, topic, semester } });
-      onDone();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="card" style={{ marginTop: 10 }}>
-      {error && <div className="error-banner">{error}</div>}
-      <div className="field">
-        <label>Subject</label>
-        <input value={subject} onChange={(e) => setSubject(e.target.value)} />
-      </div>
-      <div className="field">
-        <label>Topic</label>
-        <input value={topic} onChange={(e) => setTopic(e.target.value)} />
-      </div>
-      <div className="field">
-        <label>Semester</label>
-        <input value={semester} onChange={(e) => setSemester(e.target.value)} />
-      </div>
-      <div style={{ display: "flex", gap: 10 }}>
-        <button onClick={save} disabled={busy || !subject.trim() || !topic.trim() || !semester.trim()}>
-          {busy ? "Saving..." : "Save"}
-        </button>
-        <button className="secondary" onClick={onCancel}>Cancel</button>
-      </div>
-    </div>
-  );
-}
-
+// ─── Short-answer paper row ───────────────────────────────────────────────────
 function ShortRow({ set: s, onUpload, onDelete, navigate }) {
   const [paper, setPaper] = useState(null);
   const [editingLabel, setEditingLabel] = useState(false);
@@ -232,9 +213,22 @@ function ShortRow({ set: s, onUpload, onDelete, navigate }) {
     setPaper(data);
   }
 
+  const headLabel = (
+    <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      {`${paperLabel(s.subject, s.topic)} (short answer)`}
+      <button
+        className="icon-edit-btn"
+        title="Fix subject / topic typo"
+        onClick={(e) => { e.stopPropagation(); setEditingLabel(true); }}
+      >
+        ✏️
+      </button>
+    </span>
+  );
+
   return (
     <Collapsible
-      head={`${paperLabel(s.subject, s.topic)} (short answer)`}
+      head={headLabel}
       meta={`Sem ${s.semester} · ${formatShort(s.opened_at || s.created_at)} · status: ${s.status}`}
       done={s.status === "closed"}
     >
@@ -246,49 +240,116 @@ function ShortRow({ set: s, onUpload, onDelete, navigate }) {
           onCancel={() => setEditingLabel(false)}
         />
       ) : (
-        <div className="actions">
-          {s.status === "ready" && (
-            <>
-              <button onClick={upload}>Upload</button>
-              <button className="secondary" onClick={view}>{paper ? "Hide" : "View"}</button>
-              <button className="secondary" onClick={() => navigate(`/teacher/build-short/${s.id}`)}>Edit questions</button>
-            </>
+        <>
+          <div className="actions">
+            {s.status === "ready" && (
+              <>
+                <button onClick={upload}>Upload</button>
+                <button className="secondary" onClick={view}>{paper ? "Hide" : "View Questions"}</button>
+                <button className="secondary" onClick={() => navigate(`/teacher/build-short/${s.id}`)}>Edit Questions</button>
+              </>
+            )}
+            {s.status === "live" && (
+              <>
+                <button onClick={close}>Close &amp; grade</button>
+                <button className="secondary" onClick={view}>{paper ? "Hide" : "View Questions"}</button>
+              </>
+            )}
+            {s.status === "closed" && (
+              <>
+                <button onClick={reupload}>Re-upload</button>
+                <Link className="btn secondary" to={`/teacher/live-short/${s.id}`}>View Results</Link>
+                <button className="secondary" onClick={view}>{paper ? "Hide" : "View Questions"}</button>
+                <button className="secondary" onClick={() => navigate(`/teacher/build-short/${s.id}`)}>Edit Questions</button>
+              </>
+            )}
+            <button className="secondary" onClick={() => setEditingLabel(true)}>Edit Subject/Topic</button>
+            <button className="danger" onClick={() => onDelete(s.id)}>Delete</button>
+          </div>
+          {paper && (
+            <div style={{ marginTop: 14 }}>
+              {paper.questions.map((q, i) => (
+                <p key={q.id}>{i + 1}. {q.question_text} <span className="muted">({q.max_marks} marks)</span></p>
+              ))}
+            </div>
           )}
-          {s.status === "live" && <button onClick={close}>Close & grade</button>}
-          {s.status === "closed" && (
-            <>
-              <Link className="btn" to={`/teacher/live-short/${s.id}`}>View Results</Link>
-              <button className="secondary" onClick={reupload}>Re-upload</button>
-            </>
-          )}
-          <button className="secondary" onClick={() => setEditingLabel(true)}>Edit subject/topic</button>
-          <button className="danger" onClick={() => onDelete(s.id)}>Delete</button>
-        </div>
-      )}
-      {paper && (
-        <div style={{ marginTop: 14 }}>
-          {paper.questions.map((q, i) => (
-            <p key={q.id}>{i + 1}. {q.question_text} <span className="muted">({q.max_marks} marks)</span></p>
-          ))}
-        </div>
+        </>
       )}
     </Collapsible>
   );
 }
 
-// Shared: given the raw /teacher/scores/detailed feed, aggregate one row
-// per student, optionally scoped to a single subject, with a breakdown
-// column per key (topic when scoped to a subject, subject when overall).
-// A student who never attempted one of the papers in scope still counts as
-// zero out of that paper's full marks in their average - it's not just
-// excluded from the denominator, so a student who skipped a test doesn't
-// get an inflated average from the tests they did take.
+// ─── Inline label editor (fixes typo'd subject/topic/semester) ────────────────
+// Works at any status - ready, live, or closed. After saving, the corrected
+// label immediately re-groups all existing scores on the performance tabs.
+function LabelEditor({ set: s, table, onDone, onCancel }) {
+  const [subject, setSubject] = useState(s.subject);
+  const [topic, setTopic] = useState(s.topic);
+  const [semester, setSemester] = useState(s.semester);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    setError("");
+    setBusy(true);
+    try {
+      await api(`/teacher/${table}/${s.id}/label`, { method: "PATCH", body: { subject, topic, semester } });
+      onDone();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card label-editor" style={{ marginTop: 10 }}>
+      <div className="label-editor-title">✏️ Fix Subject / Topic</div>
+      {error && <div className="error-banner">{error}</div>}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <div className="field" style={{ flex: "1 1 160px" }}>
+          <label>Subject</label>
+          <input value={subject} onChange={(e) => setSubject(e.target.value)} autoFocus />
+        </div>
+        <div className="field" style={{ flex: "1 1 160px" }}>
+          <label>Topic</label>
+          <input value={topic} onChange={(e) => setTopic(e.target.value)} />
+        </div>
+        <div className="field" style={{ flex: "0 1 100px" }}>
+          <label>Semester</label>
+          <input value={semester} onChange={(e) => setSemester(e.target.value)} />
+        </div>
+      </div>
+      <div className="label-editor-hint">
+        Correcting a typo (e.g. "Pyhton" → "Python") re-groups all scores under
+        the corrected subject name instantly — no data is lost.
+      </div>
+      <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+        <button onClick={save} disabled={busy || !subject.trim() || !topic.trim() || !semester.trim()}>
+          {busy ? "Saving…" : "Save Correction"}
+        </button>
+        <button className="secondary" onClick={onCancel}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Aggregate helper ─────────────────────────────────────────────────────────
+// Given the raw /teacher/scores/detailed feed, build one row per student with
+// a breakdown column per key (topic when scoped to a subject; subject overall).
+//
+// ABSENT = ZERO rule: every paper that exists in scope is counted in the
+// denominator for every student, even if that student didn't sit it.
+// So a student who was absent for one of three tests still gets divided by
+// the total marks of all three, not just the two they took. This prevents
+// an inflated average for students who skipped hard tests.
 function aggregate(attempts, { subjectFilter, keyField }) {
   const scoped = subjectFilter ? attempts.filter((a) => a.subject === subjectFilter) : attempts;
 
-  // Full marks available for each breakdown column, so every student's
-  // average is measured against the same total regardless of what they
-  // actually attempted.
+  // Maximum marks available per breakdown column.  We take the highest value
+  // seen across all attempts for that column, so if the same topic was tested
+  // twice (re-upload) the bigger pool is used.  Each student's denominator is
+  // the sum of ALL column totals regardless of whether they attempted them.
   const keyTotals = new Map();
   for (const a of scoped) {
     const bKey = a[keyField] || "—";
@@ -311,19 +372,20 @@ function aggregate(attempts, { subjectFilter, keyField }) {
     let score = 0;
     let total = 0;
     for (const [bKey, maxTotal] of keyTotals) {
+      // Student's score for this column (0 if absent/not attempted).
       score += r.breakdown[bKey] ? r.breakdown[bKey].score : 0;
-      total += maxTotal; // counted whether this student attempted it or not
+      // Always add the full marks for this column to the denominator.
+      total += maxTotal;
     }
     return { ...r, score, total, avg: total ? Math.round((100 * score) / total) : 0 };
   });
+
   // Best performer on top.
   rows.sort((x, y) => y.avg - x.avg || y.score - x.score);
   return rows;
 }
 
-// Breakdown columns (topics within a subject, or subjects overall) are
-// ordered by how recently that column's paper was run - most recent first -
-// not alphabetically, so a fresh test always appears leftmost.
+// Breakdown columns ordered by most-recently-run paper first.
 function latestFirst(attempts, subjectFilter, keyField) {
   const latest = new Map();
   for (const a of attempts) {
@@ -335,15 +397,19 @@ function latestFirst(attempts, subjectFilter, keyField) {
   return [...latest.keys()].sort((x, y) => latest.get(y) - latest.get(x));
 }
 
-// Button per subject the teacher has ever run a paper for -> pick one ->
-// avg (first) then a column per topic within that subject, best on top.
+// ─── Subject Performance tab ──────────────────────────────────────────────────
+// Pick a subject → table: avg first, then a column per topic, best on top.
+// After a teacher corrects a typo (e.g. "Pyhton" → "Python"), the corrected
+// scores immediately flow into the right subject button here.
 function SubjectPerformance() {
   const [attempts, setAttempts] = useState([]);
   const [error, setError] = useState("");
   const [subject, setSubject] = useState(null);
 
   useEffect(() => {
-    api("/teacher/scores/detailed").then((d) => setAttempts(d.attempts)).catch((err) => setError(err.message));
+    api("/teacher/scores/detailed")
+      .then((d) => setAttempts(d.attempts))
+      .catch((err) => setError(err.message));
   }, []);
 
   if (error) return <div className="error-banner">{error}</div>;
@@ -352,8 +418,6 @@ function SubjectPerformance() {
   const subjects = [...new Set(attempts.map((a) => a.subject))].sort();
   const activeSubject = subject || subjects[0];
   const rows = aggregate(attempts, { subjectFilter: activeSubject, keyField: "topic" });
-  // Most recently-run topic first (e.g. if "List" was tested most recently,
-  // it leads, followed by "Tuple", then "Sets") - not alphabetical.
   const topics = latestFirst(attempts, activeSubject, "topic");
 
   return (
@@ -383,7 +447,11 @@ function SubjectPerformance() {
                 <td>{toTitleCase(r.name)}</td>
                 <td className="avg-col">{r.avg}%</td>
                 {topics.map((t) => (
-                  <td key={t}>{r.breakdown[t] ? `${r.breakdown[t].score}/${r.breakdown[t].total}` : "—"}</td>
+                  <td key={t}>
+                    {r.breakdown[t]
+                      ? `${r.breakdown[t].score}/${r.breakdown[t].total}`
+                      : <span className="absent-dash" title="Absent / not attempted">—</span>}
+                  </td>
                 ))}
               </tr>
             ))}
@@ -394,14 +462,18 @@ function SubjectPerformance() {
   );
 }
 
-// Every subject combined per student - avg first, then a column per
-// subject, best performer on top.
+// ─── Overall Performance tab ──────────────────────────────────────────────────
+// Every subject combined per student. Avg always divided by the total marks
+// of ALL subjects, even those the student skipped — so being absent for a
+// test hurts your overall percentage (0 marks, full denominator).
 function OverallPerformance() {
   const [attempts, setAttempts] = useState([]);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    api("/teacher/scores/detailed").then((d) => setAttempts(d.attempts)).catch((err) => setError(err.message));
+    api("/teacher/scores/detailed")
+      .then((d) => setAttempts(d.attempts))
+      .catch((err) => setError(err.message));
   }, []);
 
   if (error) return <div className="error-banner">{error}</div>;
@@ -425,7 +497,11 @@ function OverallPerformance() {
             <td>{toTitleCase(r.name)}</td>
             <td className="avg-col">{r.avg}%</td>
             {subjects.map((subj) => (
-              <td key={subj}>{r.breakdown[subj] ? `${r.breakdown[subj].score}/${r.breakdown[subj].total}` : "—"}</td>
+              <td key={subj}>
+                {r.breakdown[subj]
+                  ? `${r.breakdown[subj].score}/${r.breakdown[subj].total}`
+                  : <span className="absent-dash" title="Absent / not attempted">—</span>}
+              </td>
             ))}
           </tr>
         ))}

@@ -286,3 +286,39 @@ table.scoreboard td.avg-col { font-weight: 700; color: var(--accent); }
 
 /* Best performer on top of any performance table, gold highlight. */
 table.scoreboard tr.winner-row { background: rgba(193, 163, 90, 0.2); font-weight: 700; color: var(--accent); }
+
+/* Absent / not-attempted dash in scoreboard cells */
+.absent-dash { opacity: 0.45; }
+
+/* Pencil icon button embedded in collapsible head to trigger label editor */
+.icon-edit-btn {
+  background: transparent;
+  border: none;
+  padding: 2px 4px;
+  font-size: 14px;
+  cursor: pointer;
+  border-radius: var(--radius);
+  opacity: 0.7;
+  transition: opacity 0.15s, background 0.15s;
+  line-height: 1;
+  vertical-align: middle;
+}
+.icon-edit-btn:hover { opacity: 1; background: rgba(193,163,90,0.18); }
+
+/* Label editor card that replaces the actions row when correcting a typo */
+.label-editor { border-left: 4px solid var(--accent); }
+.label-editor-title {
+  font-family: var(--mono);
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 12px;
+  font-size: 15px;
+  letter-spacing: 0.05em;
+}
+.label-editor-hint {
+  font-size: 13px;
+  opacity: 0.6;
+  font-family: var(--mono);
+  margin-top: 4px;
+  line-height: 1.5;
+}
