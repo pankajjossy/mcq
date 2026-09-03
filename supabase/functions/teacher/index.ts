@@ -170,13 +170,11 @@ function validateQuestions(questions: unknown): questions is DraftQuestionIn[] {
 
 async function saveMcq(req: Request, teacherId: number) {
   const body = await req.json().catch(() => ({}));
-  const { subject, topic, semester, questions } = body as {
-    subject?: string;
-    topic?: string;
-    semester?: string;
-    questions?: unknown;
-  };
-  if (!subject || !topic || !semester || !validateQuestions(questions)) {
+  const raw = body as { subject?: string; topic?: string; semester?: string; questions?: unknown };
+  const subject = initcap((raw.subject || "").toString().trim());
+  const topic   = initcap((raw.topic   || "").toString().trim());
+  const semester = (raw.semester || "").toString().trim();
+  if (!subject || !topic || !semester || !validateQuestions(raw.questions)) {
     return json({ error: "Subject, topic, semester and at least one valid question are required." }, 400);
   }
 
@@ -185,7 +183,7 @@ async function saveMcq(req: Request, teacherId: number) {
     [teacherId, subject, topic, semester, subject]
   );
   const setId = setResult.rows[0].id;
-  await insertQuestions(setId, questions as DraftQuestionIn[]);
+  await insertQuestions(setId, raw.questions as DraftQuestionIn[]);
   return json({ id: setId });
 }
 
@@ -367,16 +365,14 @@ async function generateShort(req: Request) {
 
 async function saveShort(req: Request, teacherId: number) {
   const body = await req.json().catch(() => ({}));
-  const { subject, topic, semester, questions } = body as {
-    subject?: string;
-    topic?: string;
-    semester?: string;
-    questions?: Array<{ text: string; maxMarks: number }>;
-  };
-  if (!subject || !topic || !semester || !Array.isArray(questions) || questions.length === 0) {
+  const raw = body as { subject?: string; topic?: string; semester?: string; questions?: Array<{ text: string; maxMarks: number }> };
+  const subject  = initcap((raw.subject  || "").toString().trim());
+  const topic    = initcap((raw.topic    || "").toString().trim());
+  const semester = (raw.semester || "").toString().trim();
+  if (!subject || !topic || !semester || !Array.isArray(raw.questions) || raw.questions.length === 0) {
     return json({ error: "Subject, topic, semester and at least one question are required." }, 400);
   }
-  for (const q of questions) {
+  for (const q of raw.questions) {
     if (!q.text || !Number.isFinite(Number(q.maxMarks)) || Number(q.maxMarks) <= 0) {
       return json({ error: "Every question needs text and a positive mark value." }, 400);
     }
