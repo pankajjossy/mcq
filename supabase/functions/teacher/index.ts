@@ -95,6 +95,8 @@ Deno.serve(async (req: Request) => {
       if (req.method === "PATCH" && action === "label") return await relabelSet("short_sets", req, id, user.id);
     }
 
+    if (req.method === "PATCH" && path === "/rename-subject") return await renameSubject(req, user.id);
+
     return json({ error: "Not found." }, 404);
   } catch (err) {
     console.error(err);
@@ -252,6 +254,26 @@ async function relabelSet(table: "mcq_sets" | "short_sets", req: Request, id: st
     [subject, topic, semester, id, teacherId]
   );
   if (result.rowCount === 0) return json({ error: "Paper not found." }, 404);
+  return json({ ok: true });
+}
+
+// Renames a subject across ALL papers (mcq + short) for this teacher in one go.
+// Used by the ✏️ pencil button on the Subject Performance chips.
+async function renameSubject(req: Request, teacherId: number) {
+  const body = await req.json().catch(() => ({}));
+  const oldSubject = (body.oldSubject || "").toString().trim();
+  const newSubject = (body.newSubject || "").toString().trim();
+  if (!oldSubject || !newSubject) {
+    return json({ error: "oldSubject and newSubject are required." }, 400);
+  }
+  await query(
+    "UPDATE mcq_sets SET subject=$1, title=$1 WHERE subject=$2 AND teacher_id=$3",
+    [newSubject, oldSubject, teacherId]
+  );
+  await query(
+    "UPDATE short_sets SET subject=$1, title=$1 WHERE subject=$2 AND teacher_id=$3",
+    [newSubject, oldSubject, teacherId]
+  );
   return json({ ok: true });
 }
 

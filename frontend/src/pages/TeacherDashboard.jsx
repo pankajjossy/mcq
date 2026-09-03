@@ -372,19 +372,45 @@ function latestFirst(attempts, subjectFilter, keyField) {
 }
 
 // ─── Subject Performance tab ──────────────────────────────────────────────────
-// Pick a subject → table: avg first, then a column per topic, best on top.
-// After a teacher corrects a typo (e.g. "Pyhton" → "Python"), the corrected
-// scores immediately flow into the right subject button here.
 function SubjectPerformance() {
   const [attempts, setAttempts] = useState([]);
   const [error, setError] = useState("");
   const [subject, setSubject] = useState(null);
+  const [renamingSubject, setRenamingSubject] = useState(null); // subject name being renamed
+  const [renameVal, setRenameVal] = useState("");
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [renameError, setRenameError] = useState("");
 
-  useEffect(() => {
+  function load() {
     api("/teacher/scores/detailed")
       .then((d) => setAttempts(d.attempts))
       .catch((err) => setError(err.message));
-  }, []);
+  }
+
+  useEffect(() => { load(); }, []);
+
+  async function saveRename() {
+    if (!renameVal.trim() || renameVal.trim() === renamingSubject) {
+      setRenamingSubject(null);
+      return;
+    }
+    setRenameBusy(true);
+    setRenameError("");
+    try {
+      await api("/teacher/rename-subject", {
+        method: "PATCH",
+        body: { oldSubject: renamingSubject, newSubject: renameVal.trim() },
+      });
+      // Switch active tab to renamed subject
+      setSubject(renameVal.trim());
+      setRenamingSubject(null);
+      load();
+    } catch (err) {
+      setRenameError(err.message);
+    } finally {
+      setRenameBusy(false);
+    }
+  }
 
   if (error) return <div className="error-banner">{error}</div>;
   if (attempts.length === 0) return <p className="muted">No attempts recorded yet.</p>;
@@ -398,11 +424,58 @@ function SubjectPerformance() {
     <>
       <div className="subject-picker">
         {subjects.map((subj) => (
-          <button key={subj} className={activeSubject === subj ? "active" : ""} onClick={() => setSubject(subj)}>
-            {subj}
-          </button>
+          <span key={subj} style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
+            <button
+              className={activeSubject === subj ? "active" : ""}
+              onClick={() => setSubject(subj)}
+            >
+              {subj}
+            </button>
+            <button
+              title={`Rename "${subj}"`}
+              style={{
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                padding: "2px 4px",
+                fontSize: "0.85em",
+                opacity: 0.6,
+                lineHeight: 1,
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                setRenamingSubject(subj);
+                setRenameVal(subj);
+                setRenameError("");
+              }}
+            >
+              ✏️
+            </button>
+          </span>
         ))}
       </div>
+
+      {/* Inline rename editor */}
+      {renamingSubject && (
+        <div className="card" style={{ marginTop: 10, padding: "12px 16px", display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ fontWeight: 600, fontSize: "0.9em" }}>✏️ Rename subject: <em>{renamingSubject}</em></div>
+          {renameError && <div className="error-banner">{renameError}</div>}
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <input
+              value={renameVal}
+              onChange={(e) => setRenameVal(e.target.value)}
+              autoFocus
+              style={{ flex: "1 1 160px" }}
+              onKeyDown={(e) => { if (e.key === "Enter") saveRename(); if (e.key === "Escape") setRenamingSubject(null); }}
+            />
+            <button onClick={saveRename} disabled={renameBusy || !renameVal.trim()}>
+              {renameBusy ? "Saving…" : "Save"}
+            </button>
+            <button className="secondary" onClick={() => setRenamingSubject(null)}>Cancel</button>
+          </div>
+          <div style={{ fontSize: "0.78em", opacity: 0.6 }}>Renames this subject across all papers instantly.</div>
+        </div>
+      )}
 
       {rows.length === 0 ? (
         <p className="muted">No attempts recorded yet for {activeSubject}.</p>
