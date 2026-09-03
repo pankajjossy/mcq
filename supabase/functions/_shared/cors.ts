@@ -6,7 +6,7 @@ const allowedOrigin = Deno.env.get("FRONTEND_ORIGIN") || "*";
 export const corsHeaders = {
   "Access-Control-Allow-Origin": allowedOrigin,
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
 };
 
 // Call this first in every function - handles the browser's CORS preflight

@@ -257,8 +257,10 @@ async function relabelSet(table: "mcq_sets" | "short_sets", req: Request, id: st
   return json({ ok: true });
 }
 
-// Renames a subject across ALL papers (mcq + short) for this teacher in one go.
-// Used by the ✏️ pencil button on the Subject Performance chips.
+// Renames a subject across ALL papers (mcq + short) for this teacher.
+// Uses case-insensitive matching so "python", "Python", "Pyhton" → "Python"
+// all merge into one subject in a single save. The newSubject value becomes
+// the canonical spelling used everywhere going forward.
 async function renameSubject(req: Request, teacherId: number) {
   const body = await req.json().catch(() => ({}));
   const oldSubject = (body.oldSubject || "").toString().trim();
@@ -266,12 +268,18 @@ async function renameSubject(req: Request, teacherId: number) {
   if (!oldSubject || !newSubject) {
     return json({ error: "oldSubject and newSubject are required." }, 400);
   }
+  // Case-insensitive: also normalise all other case-variants of newSubject
+  // (e.g. "python", "PYTHON") into the canonical spelling the teacher typed.
   await query(
-    "UPDATE mcq_sets SET subject=$1, title=$1 WHERE subject=$2 AND teacher_id=$3",
+    `UPDATE mcq_sets SET subject=$1, title=$1
+     WHERE LOWER(subject) IN (LOWER($2::text), LOWER($1::text))
+     AND teacher_id=$3`,
     [newSubject, oldSubject, teacherId]
   );
   await query(
-    "UPDATE short_sets SET subject=$1, title=$1 WHERE subject=$2 AND teacher_id=$3",
+    `UPDATE short_sets SET subject=$1, title=$1
+     WHERE LOWER(subject) IN (LOWER($2::text), LOWER($1::text))
+     AND teacher_id=$3`,
     [newSubject, oldSubject, teacherId]
   );
   return json({ ok: true });
