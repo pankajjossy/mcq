@@ -79,15 +79,11 @@ function AdminPanel({ onLogout }) {
   const [teachers, setTeachers] = useState(null);
   const [students, setStudents] = useState(null);
   const [error, setError] = useState("");
-  const [showAddTeacher, setShowAddTeacher] = useState(false);
-  const [showAddStudent, setShowAddStudent] = useState(false);
 
-  useEffect(() => { load(); }, []);
-
-  function load() {
+  useEffect(() => {
     adminApi("/teachers").then((d) => setTeachers(d.teachers)).catch((err) => setError(err.message));
     adminApi("/students").then((d) => setStudents(d.students)).catch((err) => setError(err.message));
-  }
+  }, []);
 
   return (
     <div className="app-shell">
@@ -109,25 +105,11 @@ function AdminPanel({ onLogout }) {
 
       {tab === "teachers" && (
         <>
-          <div style={{ margin: "18px 0" }}>
-            <button className="secondary" onClick={() => setShowAddTeacher((v) => !v)}>
-              {showAddTeacher ? "Cancel" : "+ Add teacher"}
-            </button>
-          </div>
-          {showAddTeacher && (
-            <AddTeacherForm
-              onCreated={() => { setShowAddTeacher(false); load(); }}
-              onError={setError}
-            />
-          )}
-
           {!teachers && <p className="muted">Loading…</p>}
           {teachers?.length === 0 && <p className="muted">No teacher accounts yet.</p>}
           {teachers?.map((t) => (
             <Collapsible key={t.id} head={t.name} meta={`${t.login_name} · joined ${new Date(t.created_at).toLocaleDateString()}`}>
-              <EditTeacherForm teacher={t} onSaved={load} onError={setError} />
               <ResetPasswordForm table="teachers" id={t.id} />
-              <DeleteAccountButton table="teachers" id={t.id} label={t.name} onDeleted={load} onError={setError} />
             </Collapsible>
           ))}
         </>
@@ -135,18 +117,6 @@ function AdminPanel({ onLogout }) {
 
       {tab === "students" && (
         <>
-          <div style={{ margin: "18px 0" }}>
-            <button className="secondary" onClick={() => setShowAddStudent((v) => !v)}>
-              {showAddStudent ? "Cancel" : "+ Add student"}
-            </button>
-          </div>
-          {showAddStudent && (
-            <AddStudentForm
-              onCreated={() => { setShowAddStudent(false); load(); }}
-              onError={setError}
-            />
-          )}
-
           {!students && <p className="muted">Loading…</p>}
           {students?.length === 0 && <p className="muted">No student accounts yet.</p>}
           {students?.map((s) => (
@@ -155,150 +125,12 @@ function AdminPanel({ onLogout }) {
               head={s.name}
               meta={`${s.semester} · Roll ${s.rollno} · joined ${new Date(s.created_at).toLocaleDateString()}`}
             >
-              <EditStudentForm student={s} onSaved={load} onError={setError} />
               <ResetPasswordForm table="students" id={s.id} />
-              <DeleteAccountButton table="students" id={s.id} label={s.name} onDeleted={load} onError={setError} />
             </Collapsible>
           ))}
         </>
       )}
     </div>
-  );
-}
-
-function AddTeacherForm({ onCreated, onError }) {
-  const [form, setForm] = useState({ name: "", loginName: "", password: "" });
-  const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
-
-  async function submit(e) {
-    e.preventDefault();
-    onError("");
-    try {
-      await adminApi("/teachers", { method: "POST", body: form });
-      onCreated();
-    } catch (err) {
-      onError(err.message);
-    }
-  }
-
-  return (
-    <form onSubmit={submit} className="card">
-      <div className="field">
-        <label>Name</label>
-        <input value={form.name} onChange={set("name")} required />
-      </div>
-      <div className="field">
-        <label>Login name</label>
-        <input value={form.loginName} onChange={set("loginName")} required />
-      </div>
-      <div className="field">
-        <label>Password</label>
-        <input type="text" value={form.password} onChange={set("password")} required minLength={4} />
-      </div>
-      <button type="submit">Create teacher</button>
-    </form>
-  );
-}
-
-function AddStudentForm({ onCreated, onError }) {
-  const [form, setForm] = useState({ name: "", semester: "", rollno: "", password: "" });
-  const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
-
-  async function submit(e) {
-    e.preventDefault();
-    onError("");
-    try {
-      await adminApi("/students", { method: "POST", body: form });
-      onCreated();
-    } catch (err) {
-      onError(err.message);
-    }
-  }
-
-  return (
-    <form onSubmit={submit} className="card">
-      <div className="field">
-        <label>Name</label>
-        <input value={form.name} onChange={set("name")} required />
-      </div>
-      <div className="field">
-        <label>Semester</label>
-        <input value={form.semester} onChange={set("semester")} placeholder="e.g. Sem 3" required />
-      </div>
-      <div className="field">
-        <label>Roll number</label>
-        <input value={form.rollno} onChange={set("rollno")} required />
-      </div>
-      <div className="field">
-        <label>Password</label>
-        <input type="text" value={form.password} onChange={set("password")} required minLength={4} />
-      </div>
-      <button type="submit">Create student</button>
-    </form>
-  );
-}
-
-function EditTeacherForm({ teacher, onSaved, onError }) {
-  const [name, setName] = useState(teacher.name);
-  const [loginName, setLoginName] = useState(teacher.login_name);
-  const [status, setStatus] = useState("");
-
-  async function submit(e) {
-    e.preventDefault();
-    setStatus("");
-    onError("");
-    try {
-      await adminApi(`/teachers/${teacher.id}`, { method: "PUT", body: { name, loginName } });
-      setStatus("Saved.");
-      onSaved();
-    } catch (err) {
-      onError(err.message);
-    }
-  }
-
-  return (
-    <form onSubmit={submit} className="actions" style={{ flexDirection: "column", alignItems: "stretch", gap: 8, marginBottom: 14 }}>
-      <label style={{ margin: 0 }}>Edit details</label>
-      <div style={{ display: "flex", gap: 8 }}>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" required />
-        <input value={loginName} onChange={(e) => setLoginName(e.target.value)} placeholder="Login name" required />
-        <button type="submit">Save</button>
-      </div>
-      {status && <span className="muted">{status}</span>}
-    </form>
-  );
-}
-
-function EditStudentForm({ student, onSaved, onError }) {
-  const [name, setName] = useState(student.name);
-  const [semester, setSemester] = useState(student.semester);
-  const [rollno, setRollno] = useState(student.rollno);
-  const [status, setStatus] = useState("");
-
-  async function submit(e) {
-    e.preventDefault();
-    setStatus("");
-    onError("");
-    try {
-      await adminApi(`/students/${student.id}`, { method: "PUT", body: { name, semester, rollno } });
-      setStatus("Saved.");
-      onSaved();
-    } catch (err) {
-      onError(err.message);
-    }
-  }
-
-  return (
-    <form onSubmit={submit} className="actions" style={{ flexDirection: "column", alignItems: "stretch", gap: 8, marginBottom: 14 }}>
-      <label style={{ margin: 0 }}>Edit details</label>
-      <div style={{ display: "flex", gap: 8 }}>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" required />
-        <input value={semester} onChange={(e) => setSemester(e.target.value)} placeholder="Semester" required />
-        <input value={rollno} onChange={(e) => setRollno(e.target.value)} placeholder="Roll number" required />
-        <button type="submit">Save</button>
-      </div>
-      {status && <span className="muted">{status}</span>}
-    </form>
   );
 }
 
@@ -319,7 +151,7 @@ function ResetPasswordForm({ table, id }) {
   }
 
   return (
-    <form onSubmit={submit} className="actions" style={{ flexDirection: "column", alignItems: "stretch", gap: 8, marginBottom: 14 }}>
+    <form onSubmit={submit} className="actions" style={{ flexDirection: "column", alignItems: "stretch", gap: 8 }}>
       <label style={{ margin: 0 }}>
         Set a new password (they can't be shown their old one - it's hashed)
       </label>
@@ -337,19 +169,4 @@ function ResetPasswordForm({ table, id }) {
       {status && <span className="muted">{status}</span>}
     </form>
   );
-}
-
-function DeleteAccountButton({ table, id, label, onDeleted, onError }) {
-  async function del() {
-    if (!window.confirm(`Delete ${label}? This can't be undone.`)) return;
-    onError("");
-    try {
-      await adminApi(`/${table}/${id}`, { method: "DELETE" });
-      onDeleted();
-    } catch (err) {
-      onError(err.message);
-    }
-  }
-
-  return <button className="danger" onClick={del}>Delete account</button>;
 }

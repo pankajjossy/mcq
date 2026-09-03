@@ -183,7 +183,7 @@ async function editReply(req: Request, replyId: string, user: AuthUser) {
 async function pastPaper(id: string) {
   const setResult = await query(
     `SELECT id, subject, semester, title FROM mcq_sets
-     WHERE id=$1 AND (status='closed' OR (status='live' AND opened_at < now() - interval '30 minutes'))`,
+     WHERE id=$1 AND (status='closed' OR (status='live' AND opened_at < now() - interval '40 minutes'))`,
     [id]
   );
   if (setResult.rowCount === 0) return json({ error: "That paper isn't available to view yet." }, 404);

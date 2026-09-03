@@ -2,8 +2,7 @@
 // All routes require a student JWT (Authorization: Bearer <token>).
 // Routes, matched by path after /functions/v1/student:
 //   MCQ-family
-//   GET  /mcq/active           -> { today, archive }   (today = live, uploaded in the last 30 minutes,
-//                                                        AND matching this student's own semester)
+//   GET  /mcq/active           -> { today, archive }   (today = live AND uploaded in the last 40 minutes)
 //   GET  /mcq/:id              -> { set, questions }
 //   POST /mcq/:id/submit       { answers } -> { score, total }
 //   GET  /mcq/:id/review       -> { set, questions }    (this student's own past attempt, answer key + their picks)
@@ -22,7 +21,9 @@ import { gradeShortAnswerPhoto } from "../_shared/gemini.ts";
 // A paper only sits in the "exam hall" (today's list) for this long after
 // the teacher uploads it - after that it's expected to have already been
 // taken, and it drops off students' landing view into the dashboard history.
-const EXAM_HALL_MINUTES = 35;
+// A teacher can always bring a closed paper back for late arrivals by
+// re-uploading it, which resets this window.
+const EXAM_HALL_MINUTES = 30;
 
 Deno.serve(async (req: Request) => {
   const preflight = handlePreflight(req);
@@ -36,7 +37,7 @@ Deno.serve(async (req: Request) => {
   const pool = getPool();
 
   try {
-    if (req.method === "GET" && path === "/mcq/active") return await activePapers(pool, user.id, user.semester ?? "");
+    if (req.method === "GET" && path === "/mcq/active") return await activePapers(pool, user.id);
     if (req.method === "GET" && path === "/dashboard") return await dashboard(pool, user.id);
 
     const submitMatch = path.match(/^\/mcq\/(\d+)\/submit$/);
@@ -46,15 +47,15 @@ Deno.serve(async (req: Request) => {
     if (req.method === "GET" && reviewMatch) return await review(pool, reviewMatch[1], user.id);
 
     const getMatch = path.match(/^\/mcq\/(\d+)$/);
-    if (req.method === "GET" && getMatch) return await getPaper(pool, getMatch[1], user.id, user.semester ?? "");
+    if (req.method === "GET" && getMatch) return await getPaper(pool, getMatch[1], user.id);
 
-    if (req.method === "GET" && path === "/short/active") return await activeShortPapers(pool, user.id, user.semester ?? "");
+    if (req.method === "GET" && path === "/short/active") return await activeShortPapers(pool, user.id);
 
     const shortSubmitMatch = path.match(/^\/short\/(\d+)\/submit$/);
     if (req.method === "POST" && shortSubmitMatch) return await submitShort(req, pool, shortSubmitMatch[1], user.id);
 
     const shortGetMatch = path.match(/^\/short\/(\d+)$/);
-    if (req.method === "GET" && shortGetMatch) return await getShortPaper(pool, shortGetMatch[1], user.id, user.semester ?? "");
+    if (req.method === "GET" && shortGetMatch) return await getShortPaper(pool, shortGetMatch[1], user.id);
 
     return json({ error: "Not found." }, 404);
   } catch (err) {
@@ -65,18 +66,21 @@ Deno.serve(async (req: Request) => {
 
 // ---------- MCQ-family ----------
 
-async function activePapers(pool: ReturnType<typeof getPool>, studentId: number, semester: string) {
+async function activePapers(pool: ReturnType<typeof getPool>, studentId: number) {
+  // Only this student's own semester shows up in the exam hall - a paper a
+  // teacher made for Semester 3 never appears for a Semester 1 student.
   const today = await pool.query(
     `SELECT ms.id, ms.subject, ms.topic, ms.semester, ms.title, ms.opened_at
      FROM mcq_sets ms
+     JOIN students st ON st.id = $1
      WHERE ms.status = 'live'
+       AND ms.semester = st.semester
        AND ms.opened_at > now() - interval '${EXAM_HALL_MINUTES} minutes'
-       AND ms.semester = $2
        AND NOT EXISTS (
          SELECT 1 FROM attempts a WHERE a.mcq_set_id = ms.id AND a.student_id = $1
        )
      ORDER BY ms.opened_at DESC`,
-    [studentId, semester]
+    [studentId]
   );
 
   const archive = await pool.query(
@@ -90,12 +94,16 @@ async function activePapers(pool: ReturnType<typeof getPool>, studentId: number,
   return json({ today: today.rows, archive: archive.rows });
 }
 
-async function getPaper(pool: ReturnType<typeof getPool>, setId: string, studentId: number, semester: string) {
+async function getPaper(pool: ReturnType<typeof getPool>, setId: string, studentId: number) {
+  // Same semester guard as activePapers() - a student can't open a paper
+  // meant for a different semester even by going straight to the URL.
   const setResult = await pool.query(
-    `SELECT id, subject, topic, semester, title, teacher_id FROM mcq_sets
-     WHERE id=$1 AND status='live' AND semester=$2
-       AND opened_at > now() - interval '${EXAM_HALL_MINUTES} minutes'`,
-    [setId, semester]
+    `SELECT ms.id, ms.subject, ms.topic, ms.semester, ms.title, ms.teacher_id
+     FROM mcq_sets ms
+     JOIN students st ON st.id = $2
+     WHERE ms.id=$1 AND ms.status='live' AND ms.semester = st.semester
+       AND ms.opened_at > now() - interval '${EXAM_HALL_MINUTES} minutes'`,
+    [setId, studentId]
   );
   if (setResult.rowCount === 0) {
     return json({ error: "This paper is not available right now." }, 404);
@@ -261,18 +269,19 @@ async function dashboard(pool: ReturnType<typeof getPool>, studentId: number) {
 
 // ---------- Short-answer (photo upload, AI-graded) ----------
 
-async function activeShortPapers(pool: ReturnType<typeof getPool>, studentId: number, semester: string) {
+async function activeShortPapers(pool: ReturnType<typeof getPool>, studentId: number) {
   const today = await pool.query(
     `SELECT ss.id, ss.subject, ss.topic, ss.semester, ss.title, ss.opened_at
      FROM short_sets ss
+     JOIN students st ON st.id = $1
      WHERE ss.status = 'live'
+       AND ss.semester = st.semester
        AND ss.opened_at > now() - interval '${EXAM_HALL_MINUTES} minutes'
-       AND ss.semester = $2
        AND NOT EXISTS (
          SELECT 1 FROM short_attempts a WHERE a.short_set_id = ss.id AND a.student_id = $1
        )
      ORDER BY ss.opened_at DESC`,
-    [studentId, semester]
+    [studentId]
   );
 
   const archive = await pool.query(
@@ -286,12 +295,14 @@ async function activeShortPapers(pool: ReturnType<typeof getPool>, studentId: nu
   return json({ today: today.rows, archive: archive.rows });
 }
 
-async function getShortPaper(pool: ReturnType<typeof getPool>, setId: string, studentId: number, semester: string) {
+async function getShortPaper(pool: ReturnType<typeof getPool>, setId: string, studentId: number) {
   const setResult = await pool.query(
-    `SELECT id, subject, topic, semester, title FROM short_sets
-     WHERE id=$1 AND status='live' AND semester=$2
-       AND opened_at > now() - interval '${EXAM_HALL_MINUTES} minutes'`,
-    [setId, semester]
+    `SELECT ss.id, ss.subject, ss.topic, ss.semester, ss.title
+     FROM short_sets ss
+     JOIN students st ON st.id = $2
+     WHERE ss.id=$1 AND ss.status='live' AND ss.semester = st.semester
+       AND ss.opened_at > now() - interval '${EXAM_HALL_MINUTES} minutes'`,
+    [setId, studentId]
   );
   if (setResult.rowCount === 0) {
     return json({ error: "This paper is not available right now." }, 404);

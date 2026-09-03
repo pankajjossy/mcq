@@ -32,12 +32,6 @@ export default function TeacherBuildMcq() {
   const [subject, setSubject] = useState("");
   const [topic, setTopic] = useState("");
   const [semester, setSemester] = useState("");
-  // Previously-used subjects/topics, suggested via a native datalist so a
-  // teacher can pick "Python" instead of retyping it - retyping is exactly
-  // how "Python" vs "python" vs a stray "Pyhton" typo end up looking like
-  // three different subjects on the performance screens.
-  const [subjectOptions, setSubjectOptions] = useState([]);
-  const [topicOptions, setTopicOptions] = useState([]);
   const [difficulty, setDifficulty] = useState("medium");
   const [typeCounts, setTypeCounts] = useState({ mcq: 5, true_false: 0, fill_blank: 0, match: 0 });
   const [pastedText, setPastedText] = useState("");
@@ -54,20 +48,12 @@ export default function TeacherBuildMcq() {
   // directly, same as the other types get reviewed before saving.
   const [includeShort, setIncludeShort] = useState(false);
   const [shortQuestions, setShortQuestions] = useState([{ text: "", maxMarks: 5 }]);
-  // Who writes the short-answer question text: the teacher, or Gemini from
-  // the same pasted source text used for the MCQ-family types above.
-  const [shortSource, setShortSource] = useState("manual"); // manual | gemini
+  // Who writes the short-answer questions: the teacher types them by hand,
+  // or Gemini drafts them from the same pasted/uploaded source text used
+  // for the MCQ-family types (still fully editable afterwards).
+  const [shortSource, setShortSource] = useState("user"); // "user" | "gemini"
   const [shortCount, setShortCount] = useState(3);
   const [shortBusy, setShortBusy] = useState(false);
-
-  useEffect(() => {
-    api("/teacher/subjects")
-      .then((data) => {
-        setSubjectOptions(data.subjects || []);
-        setTopicOptions(data.topics || []);
-      })
-      .catch(() => {}); // suggestions are a nicety, not worth surfacing an error banner for
-  }, []);
 
   useEffect(() => {
     if (!editingId) return;
@@ -162,15 +148,11 @@ export default function TeacherBuildMcq() {
     try {
       let textToSend = pastedText;
       if (file) textToSend = await extractTextFromFile(file);
-      if (!textToSend || textToSend.trim().length < 20) {
-        setError("Paste source text or upload a document above first - at least a full paragraph.");
-        return;
-      }
       const data = await api("/teacher/short/generate", {
         method: "POST",
         body: { text: textToSend, count: shortCount, difficulty },
       });
-      setShortQuestions(data.questions);
+      setShortQuestions(data.questions.map((q) => ({ text: q.question, maxMarks: q.maxMarks })));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -227,17 +209,11 @@ export default function TeacherBuildMcq() {
       <div className="card">
         <div className="field">
           <label>Subject</label>
-          <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="e.g. Python" list="subject-options" />
-          <datalist id="subject-options">
-            {subjectOptions.map((s) => <option key={s} value={s} />)}
-          </datalist>
+          <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="e.g. Python" />
         </div>
         <div className="field">
           <label>Topic</label>
-          <input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="e.g. List, Tuple, Sets" list="topic-options" />
-          <datalist id="topic-options">
-            {topicOptions.map((t) => <option key={t} value={t} />)}
-          </datalist>
+          <input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="e.g. List, Tuple, Sets" />
         </div>
         <div className="field">
           <label>Semester</label>
@@ -300,9 +276,8 @@ export default function TeacherBuildMcq() {
                   {busy ? "Generating..." : "Generate with Gemini"}
                 </button>
                 <p className="muted" style={{ marginTop: 10 }}>
-                  Generating is only for the multiple-choice-family types above here. If you only want a
-                  short-answer/essay paper, skip generating - just check the box above, choose who writes
-                  those questions below, and click Done.
+                  Generating with the button above is only for the multiple-choice-family types. Short-answer/essay
+                  questions have their own choice of who writes them, further down.
                 </p>
               </>
             ) : (
@@ -381,30 +356,45 @@ export default function TeacherBuildMcq() {
 
                 <label>Who writes these questions?</label>
                 <div className="difficulty-row">
-                  <button type="button" className={shortSource === "manual" ? "active" : ""} onClick={() => setShortSource("manual")}>
+                  <button
+                    type="button"
+                    className={shortSource === "user" ? "active" : ""}
+                    onClick={() => setShortSource("user")}
+                  >
                     I'll write them
                   </button>
-                  <button type="button" className={shortSource === "gemini" ? "active" : ""} onClick={() => setShortSource("gemini")}>
+                  <button
+                    type="button"
+                    className={shortSource === "gemini" ? "active" : ""}
+                    onClick={() => setShortSource("gemini")}
+                  >
                     Generate with Gemini
                   </button>
                 </div>
 
                 {shortSource === "gemini" && (
-                  <div style={{ display: "flex", gap: 10, alignItems: "flex-end", margin: "10px 0" }}>
-                    <div className="field" style={{ margin: 0 }}>
-                      <label>How many?</label>
-                      <input
-                        type="number"
-                        min="1"
-                        max="10"
-                        className="marks-input"
-                        value={shortCount}
-                        onChange={(e) => setShortCount(Number(e.target.value))}
-                      />
-                    </div>
-                    <button type="button" onClick={generateShort} disabled={shortBusy || (!pastedText && !file)}>
-                      {shortBusy ? "Generating..." : "Generate short-answer questions"}
+                  <div className="field" style={{ marginTop: 10 }}>
+                    <label>How many questions?</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="20"
+                      className="marks-input"
+                      value={shortCount}
+                      onChange={(e) => setShortCount(Number(e.target.value))}
+                    />
+                    <button
+                      type="button"
+                      style={{ marginTop: 10 }}
+                      onClick={generateShort}
+                      disabled={shortBusy || (!pastedText && !file)}
+                    >
+                      {shortBusy ? "Generating..." : "Generate with Gemini"}
                     </button>
+                    <p className="muted" style={{ marginTop: 6 }}>
+                      Uses the same pasted text / uploaded document as above. Every question stays editable
+                      below before you save.
+                    </p>
                   </div>
                 )}
 

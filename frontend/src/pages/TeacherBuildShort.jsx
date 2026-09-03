@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../api.js";
+import { extractTextFromFile } from "../extractText.js";
 
 export default function TeacherBuildShort() {
   const { id } = useParams();
@@ -9,18 +10,20 @@ export default function TeacherBuildShort() {
 
   const [subject, setSubject] = useState("");
   const [topic, setTopic] = useState("");
-  const [subjectOptions, setSubjectOptions] = useState([]);
-  const [topicOptions, setTopicOptions] = useState([]);
   const [semester, setSemester] = useState("");
   const [questions, setQuestions] = useState([{ text: "", maxMarks: 5 }]);
   const [error, setError] = useState("");
   const [loadingEdit, setLoadingEdit] = useState(!!editingId);
 
-  useEffect(() => {
-    api("/teacher/subjects")
-      .then((data) => { setSubjectOptions(data.subjects || []); setTopicOptions(data.topics || []); })
-      .catch(() => {});
-  }, []);
+  // Who writes the questions: the teacher types them directly, or Gemini
+  // drafts them from pasted/uploaded source text - either way, every
+  // question is fully editable below before saving.
+  const [source, setSource] = useState("user"); // "user" | "gemini"
+  const [difficulty, setDifficulty] = useState("medium");
+  const [count, setCount] = useState(3);
+  const [pastedText, setPastedText] = useState("");
+  const [file, setFile] = useState(null);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (!editingId) return;
@@ -47,6 +50,24 @@ export default function TeacherBuildShort() {
 
   function removeQuestion(i) {
     setQuestions(questions.filter((_, idx) => idx !== i));
+  }
+
+  async function generate() {
+    setError("");
+    setBusy(true);
+    try {
+      let textToSend = pastedText;
+      if (file) textToSend = await extractTextFromFile(file);
+      const data = await api("/teacher/short/generate", {
+        method: "POST",
+        body: { text: textToSend, count, difficulty },
+      });
+      setQuestions(data.questions.map((q) => ({ text: q.question, maxMarks: q.maxMarks })));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
   }
 
   const totalMarks = questions.reduce((sum, q) => sum + (Number(q.maxMarks) || 0), 0);
@@ -85,18 +106,71 @@ export default function TeacherBuildShort() {
       <div className="card">
         <div className="field">
           <label>Subject</label>
-          <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="e.g. History" list="subject-options" />
-          <datalist id="subject-options">{subjectOptions.map((s) => <option key={s} value={s} />)}</datalist>
+          <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="e.g. History" />
         </div>
         <div className="field">
           <label>Topic</label>
-          <input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="e.g. World War 2" list="topic-options" />
-          <datalist id="topic-options">{topicOptions.map((t) => <option key={t} value={t} />)}</datalist>
+          <input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="e.g. World War II" />
         </div>
         <div className="field">
           <label>Semester</label>
           <input value={semester} onChange={(e) => setSemester(e.target.value)} placeholder="e.g. Sem 3" />
         </div>
+
+        {!editingId && (
+          <>
+            <label>Who writes these questions?</label>
+            <div className="difficulty-row">
+              <button type="button" className={source === "user" ? "active" : ""} onClick={() => setSource("user")}>
+                I'll write them
+              </button>
+              <button type="button" className={source === "gemini" ? "active" : ""} onClick={() => setSource("gemini")}>
+                Generate with Gemini
+              </button>
+            </div>
+
+            {source === "gemini" && (
+              <div className="field" style={{ marginTop: 10 }}>
+                <label>Difficulty</label>
+                <div className="difficulty-row">
+                  {["easy", "medium", "hard"].map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      className={difficulty === d ? "active" : ""}
+                      onClick={() => setDifficulty(d)}
+                    >
+                      {d[0].toUpperCase() + d.slice(1)}
+                    </button>
+                  ))}
+                </div>
+                <label>How many questions?</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="20"
+                  className="marks-input"
+                  value={count}
+                  onChange={(e) => setCount(Number(e.target.value))}
+                />
+                <div className="field" style={{ marginTop: 10 }}>
+                  <label>Paste source text</label>
+                  <textarea rows="6" value={pastedText} onChange={(e) => setPastedText(e.target.value)} placeholder="Paste a chapter, notes, or topic summary..." />
+                </div>
+                <div className="field">
+                  <label>...or upload a document (.txt, .docx, .pdf)</label>
+                  <input type="file" accept=".txt,.docx,.pdf" onChange={(e) => setFile(e.target.files[0])} />
+                </div>
+                <button type="button" onClick={generate} disabled={busy || (!pastedText && !file)}>
+                  {busy ? "Generating..." : "Generate with Gemini"}
+                </button>
+                <p className="muted" style={{ marginTop: 6 }}>
+                  Every question stays fully editable below before you save.
+                </p>
+              </div>
+            )}
+          </>
+        )}
 
         {questions.map((q, i) => (
           <div className="short-question-block" key={i}>

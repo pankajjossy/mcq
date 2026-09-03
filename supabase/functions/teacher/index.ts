@@ -11,13 +11,15 @@
 //   POST   /mcq/:id/upload                                         -> { ok }
 //   POST   /mcq/:id/close                                          -> { ok }
 //   GET    /mcq/:id/results                                        -> { results }
+//   PATCH  /mcq/:id/label     { subject, topic, semester }         -> { ok }   (any status - fixes typos)
 //   GET    /scores/detailed                                        -> { attempts }  (one row per student per test)
 //
 //   Short-answer papers (photo upload, AI-graded) - also reachable as a
 //   choice from the same "New Paper" screen as the MCQ-family types above.
+//   Questions can be typed by the teacher, or generated with Gemini from
+//   pasted/uploaded source text (the teacher picks which, per paper).
+//   POST   /short/generate   { text, count, difficulty }             -> { questions }
 //   POST   /short/save       { subject, topic, semester, questions } -> { id }
-//   POST   /short/generate   { text, count, difficulty }             -> { questions }  (question text only, no key -
-//                                                                        the alternative to typing them in yourself)
 //   GET    /short                                                  -> { sets }
 //   GET    /short/:id                                              -> { set, questions }
 //   PUT    /short/:id        { subject, topic, semester, questions } -> { ok }
@@ -25,32 +27,12 @@
 //   POST   /short/:id/upload                                       -> { ok }
 //   POST   /short/:id/close                                        -> { ok }
 //   GET    /short/:id/results                                      -> { results }
-//
-//   GET    /subjects                                                -> { subjects: string[], topics: string[] }
-//     Every subject/topic this teacher has ever used, for the "New Paper"
-//     screen to suggest from - so a teacher can pick "Python" instead of
-//     retyping it (and risking a typo like "Pyhton" that would otherwise
-//     show up as a separate subject on the performance screens).
+//   PATCH  /short/:id/label   { subject, topic, semester }         -> { ok }   (any status - fixes typos)
 
 import { query } from "../_shared/db.ts";
 import { requireAuth } from "../_shared/jwt.ts";
 import { corsHeaders, handlePreflight, json } from "../_shared/cors.ts";
 import { generateQuestionsFromText, generateShortAnswerQuestions, type TypeCounts } from "../_shared/gemini.ts";
-
-// Subject/topic names are never treated as case-sensitive: "Python",
-// "python" and "PYTHON" are the same subject. Every save/update below
-// canonicalizes to a consistent Title Case before it ever reaches the
-// database, so new papers can't drift into near-duplicate subjects the
-// way old ones could. (A genuine misspelling like "Pyhton" is still a
-// different string on purpose - that's not a case issue, and guessing at
-// spelling similarity risks merging subjects that are actually different.)
-function titleCase(s: string): string {
-  return s
-    .trim()
-    .replace(/\s+/g, " ")
-    .toLowerCase()
-    .replace(/(^|[\s'-])([a-z])/g, (_, sep, letter) => sep + letter.toUpperCase());
-}
 
 interface DraftQuestionIn {
   type: "mcq" | "true_false" | "fill_blank" | "match";
@@ -72,16 +54,15 @@ Deno.serve(async (req: Request) => {
   const url = new URL(req.url);
   const path = url.pathname.replace(/^\/teacher/, "");
   const mcqIdMatch = path.match(/^\/mcq\/(\d+)$/);
-  const mcqActionMatch = path.match(/^\/mcq\/(\d+)\/(upload|close|results)$/);
+  const mcqActionMatch = path.match(/^\/mcq\/(\d+)\/(upload|close|results|label)$/);
   const shortIdMatch = path.match(/^\/short\/(\d+)$/);
-  const shortActionMatch = path.match(/^\/short\/(\d+)\/(upload|close|results)$/);
+  const shortActionMatch = path.match(/^\/short\/(\d+)\/(upload|close|results|label)$/);
 
   try {
     if (req.method === "POST" && path === "/mcq/generate") return await generate(req);
     if (req.method === "POST" && path === "/mcq/save") return await saveMcq(req, user.id);
     if (req.method === "GET" && path === "/mcq") return await listMcqSets(user.id);
     if (req.method === "GET" && path === "/scores/detailed") return await detailedScores(user.id);
-    if (req.method === "GET" && path === "/subjects") return await subjectSuggestions(user.id);
 
     if (mcqIdMatch) {
       const [, id] = mcqIdMatch;
@@ -94,10 +75,11 @@ Deno.serve(async (req: Request) => {
       if (req.method === "POST" && action === "upload") return await openSet("mcq_sets", id, user.id);
       if (req.method === "POST" && action === "close") return await closeSet("mcq_sets", id, user.id);
       if (req.method === "GET" && action === "results") return await liveResults(id, user.id);
+      if (req.method === "PATCH" && action === "label") return await relabelSet("mcq_sets", req, id, user.id);
     }
 
-    if (req.method === "POST" && path === "/short/save") return await saveShort(req, user.id);
     if (req.method === "POST" && path === "/short/generate") return await generateShort(req);
+    if (req.method === "POST" && path === "/short/save") return await saveShort(req, user.id);
     if (req.method === "GET" && path === "/short") return await listShortSets(user.id);
     if (shortIdMatch) {
       const [, id] = shortIdMatch;
@@ -110,6 +92,7 @@ Deno.serve(async (req: Request) => {
       if (req.method === "POST" && action === "upload") return await openSet("short_sets", id, user.id);
       if (req.method === "POST" && action === "close") return await closeSet("short_sets", id, user.id);
       if (req.method === "GET" && action === "results") return await shortResults(id, user.id);
+      if (req.method === "PATCH" && action === "label") return await relabelSet("short_sets", req, id, user.id);
     }
 
     return json({ error: "Not found." }, 404);
@@ -180,15 +163,12 @@ function validateQuestions(questions: unknown): questions is DraftQuestionIn[] {
 
 async function saveMcq(req: Request, teacherId: number) {
   const body = await req.json().catch(() => ({}));
-  let { subject, topic, semester, questions } = body as {
+  const { subject, topic, semester, questions } = body as {
     subject?: string;
     topic?: string;
     semester?: string;
     questions?: unknown;
   };
-  subject = subject ? titleCase(subject) : subject;
-  topic = topic ? titleCase(topic) : topic;
-  semester = semester?.trim();
   if (!subject || !topic || !semester || !validateQuestions(questions)) {
     return json({ error: "Subject, topic, semester and at least one valid question are required." }, 400);
   }
@@ -231,15 +211,12 @@ async function getMcqSet(id: string, teacherId: number) {
 // Editing is only allowed before the paper goes live.
 async function updateMcqSet(req: Request, id: string, teacherId: number) {
   const body = await req.json().catch(() => ({}));
-  let { subject, topic, semester, questions } = body as {
+  const { subject, topic, semester, questions } = body as {
     subject?: string;
     topic?: string;
     semester?: string;
     questions?: unknown;
   };
-  subject = subject ? titleCase(subject) : subject;
-  topic = topic ? titleCase(topic) : topic;
-  semester = semester?.trim();
   if (!subject || !topic || !semester || !validateQuestions(questions)) {
     return json({ error: "Subject, topic, semester and at least one valid question are required." }, 400);
   }
@@ -253,6 +230,28 @@ async function updateMcqSet(req: Request, id: string, teacherId: number) {
   await query("UPDATE mcq_sets SET subject=$1, topic=$2, semester=$3, title=$1 WHERE id=$4", [subject, topic, semester, id]);
   await query("DELETE FROM mcq_questions WHERE mcq_set_id=$1", [id]);
   await insertQuestions(Number(id), questions as DraftQuestionIn[]);
+  return json({ ok: true });
+}
+
+// Fixes a typo'd subject/topic/semester (e.g. "Pyhton" -> "Python") on a
+// paper that's already live or closed, without touching its questions or
+// any attempts/scores already recorded against it - those keep pointing at
+// the same set id, so once the label is corrected the results simply
+// re-group under the corrected subject everywhere (dashboard, wall, etc).
+// Unlike the full PUT above, this is allowed at any status.
+async function relabelSet(table: "mcq_sets" | "short_sets", req: Request, id: string, teacherId: number) {
+  const body = await req.json().catch(() => ({}));
+  const subject = (body.subject || "").toString().trim();
+  const topic = (body.topic || "").toString().trim();
+  const semester = (body.semester || "").toString().trim();
+  if (!subject || !topic || !semester) {
+    return json({ error: "Subject, topic and semester are required." }, 400);
+  }
+  const result = await query(
+    `UPDATE ${table} SET subject=$1, topic=$2, semester=$3, title=$1 WHERE id=$4 AND teacher_id=$5 RETURNING id`,
+    [subject, topic, semester, id, teacherId]
+  );
+  if (result.rowCount === 0) return json({ error: "Paper not found." }, 404);
   return json({ ok: true });
 }
 
@@ -316,23 +315,6 @@ async function detailedScores(teacherId: number) {
   return json({ attempts: result.rows });
 }
 
-// Every subject/topic this teacher has used before, across MCQ-family and
-// short-answer papers alike, regardless of whether anyone's attempted them
-// yet (unlike /scores/detailed, which only knows about subjects with at
-// least one submitted attempt). Powers the suggestion list on "New Paper"
-// so a teacher can pick "Python" rather than retype it.
-async function subjectSuggestions(teacherId: number) {
-  const result = await query(
-    `SELECT subject, topic FROM mcq_sets WHERE teacher_id=$1
-     UNION
-     SELECT subject, topic FROM short_sets WHERE teacher_id=$1`,
-    [teacherId]
-  );
-  const subjects = [...new Set(result.rows.map((r: { subject: string }) => titleCase(r.subject || "")).filter(Boolean))].sort();
-  const topics = [...new Set(result.rows.map((r: { topic: string }) => titleCase(r.topic || "")).filter(Boolean))].sort();
-  return json({ subjects, topics });
-}
-
 // ---------- Short-answer (photo upload, AI-graded) ----------
 
 async function generateShort(req: Request) {
@@ -354,15 +336,12 @@ async function generateShort(req: Request) {
 
 async function saveShort(req: Request, teacherId: number) {
   const body = await req.json().catch(() => ({}));
-  let { subject, topic, semester, questions } = body as {
+  const { subject, topic, semester, questions } = body as {
     subject?: string;
     topic?: string;
     semester?: string;
     questions?: Array<{ text: string; maxMarks: number }>;
   };
-  subject = subject ? titleCase(subject) : subject;
-  topic = topic ? titleCase(topic) : topic;
-  semester = semester?.trim();
   if (!subject || !topic || !semester || !Array.isArray(questions) || questions.length === 0) {
     return json({ error: "Subject, topic, semester and at least one question are required." }, 400);
   }
@@ -411,15 +390,12 @@ async function getShortSet(id: string, teacherId: number) {
 
 async function updateShortSet(req: Request, id: string, teacherId: number) {
   const body = await req.json().catch(() => ({}));
-  let { subject, topic, semester, questions } = body as {
+  const { subject, topic, semester, questions } = body as {
     subject?: string;
     topic?: string;
     semester?: string;
     questions?: Array<{ text: string; maxMarks: number }>;
   };
-  subject = subject ? titleCase(subject) : subject;
-  topic = topic ? titleCase(topic) : topic;
-  semester = semester?.trim();
   if (!subject || !topic || !semester || !Array.isArray(questions) || questions.length === 0) {
     return json({ error: "Subject, topic, semester and at least one question are required." }, 400);
   }

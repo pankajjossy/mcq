@@ -99,14 +99,22 @@ export default function TeacherDashboard() {
 
 function McqRow({ set: s, onUpload, onDelete, navigate }) {
   const [paper, setPaper] = useState(null);
+  const [editingLabel, setEditingLabel] = useState(false);
 
   async function upload() {
     await api(`/teacher/mcq/${s.id}/upload`, { method: "POST" });
     onUpload();
   }
-  async function closeAndFinalize() {
+  async function closeAndShow() {
     await api(`/teacher/mcq/${s.id}/close`, { method: "POST" });
     navigate(`/teacher/live/${s.id}`);
+  }
+  async function reupload() {
+    // Same paper, back on the landing page for another 30 minutes - for
+    // students who missed it the first time. Students who already attempted
+    // it still won't see it again (the server excludes existing attempts).
+    await api(`/teacher/mcq/${s.id}/upload`, { method: "POST" });
+    onUpload();
   }
   async function view() {
     if (paper) return setPaper(null);
@@ -120,33 +128,91 @@ function McqRow({ set: s, onUpload, onDelete, navigate }) {
       meta={`Sem ${s.semester} · ${formatShort(s.opened_at || s.created_at)} · status: ${s.status} · ${s.total_marks} marks`}
       done={s.status === "closed"}
     >
-      <div className="actions">
-        {s.status === "ready" && <button onClick={upload}>Upload</button>}
-        {s.status === "live" && (
-          <>
-            <Link className="btn" to={`/teacher/live/${s.id}`}>View Results</Link>
-            <button onClick={closeAndFinalize}>Close & Finalize</button>
-          </>
-        )}
-        {s.status === "closed" && (
-          <>
-            <Link className="btn" to={`/teacher/live/${s.id}`}>View Results</Link>
-            <button className="secondary" onClick={upload}>Re-upload to landing page</button>
-          </>
-        )}
-        <button className="secondary" onClick={view}>{paper ? "Hide" : "View MCQ"}</button>
-        {s.status === "ready" && (
-          <button className="secondary" onClick={() => navigate(`/teacher/build/${s.id}`)}>Edit</button>
-        )}
-        <button className="danger" onClick={() => onDelete(s.id)}>Delete</button>
-      </div>
+      {editingLabel ? (
+        <LabelEditor
+          set={s}
+          table="mcq"
+          onDone={() => { setEditingLabel(false); onUpload(); }}
+          onCancel={() => setEditingLabel(false)}
+        />
+      ) : (
+        <div className="actions">
+          {s.status === "ready" && (
+            <>
+              <button onClick={upload}>Upload</button>
+              <button className="secondary" onClick={view}>{paper ? "Hide" : "View"}</button>
+              <button className="secondary" onClick={() => navigate(`/teacher/build/${s.id}`)}>Edit questions</button>
+            </>
+          )}
+          {s.status === "live" && <button onClick={closeAndShow}>Show Results</button>}
+          {s.status === "closed" && (
+            <>
+              <Link className="btn" to={`/teacher/live/${s.id}`}>View Results</Link>
+              <button className="secondary" onClick={reupload}>Re-upload</button>
+            </>
+          )}
+          {/* Correcting a typo'd subject/topic works at any status, and
+              re-groups this paper's already-recorded scores under the
+              corrected subject in Subject/Overall Performance. */}
+          <button className="secondary" onClick={() => setEditingLabel(true)}>Edit subject/topic</button>
+          <button className="danger" onClick={() => onDelete(s.id)}>Delete</button>
+        </div>
+      )}
       {paper && <div style={{ marginTop: 14 }}><PaperReview questions={paper.questions} /></div>}
     </Collapsible>
   );
 }
 
+// Small inline form for fixing a subject/topic/semester typo without
+// touching questions - works whether the paper is ready, live, or closed.
+function LabelEditor({ set: s, table, onDone, onCancel }) {
+  const [subject, setSubject] = useState(s.subject);
+  const [topic, setTopic] = useState(s.topic);
+  const [semester, setSemester] = useState(s.semester);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    setError("");
+    setBusy(true);
+    try {
+      await api(`/teacher/${table}/${s.id}/label`, { method: "PATCH", body: { subject, topic, semester } });
+      onDone();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card" style={{ marginTop: 10 }}>
+      {error && <div className="error-banner">{error}</div>}
+      <div className="field">
+        <label>Subject</label>
+        <input value={subject} onChange={(e) => setSubject(e.target.value)} />
+      </div>
+      <div className="field">
+        <label>Topic</label>
+        <input value={topic} onChange={(e) => setTopic(e.target.value)} />
+      </div>
+      <div className="field">
+        <label>Semester</label>
+        <input value={semester} onChange={(e) => setSemester(e.target.value)} />
+      </div>
+      <div style={{ display: "flex", gap: 10 }}>
+        <button onClick={save} disabled={busy || !subject.trim() || !topic.trim() || !semester.trim()}>
+          {busy ? "Saving..." : "Save"}
+        </button>
+        <button className="secondary" onClick={onCancel}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
 function ShortRow({ set: s, onUpload, onDelete, navigate }) {
   const [paper, setPaper] = useState(null);
+  const [editingLabel, setEditingLabel] = useState(false);
 
   async function upload() {
     await api(`/teacher/short/${s.id}/upload`, { method: "POST" });
@@ -154,6 +220,10 @@ function ShortRow({ set: s, onUpload, onDelete, navigate }) {
   }
   async function close() {
     await api(`/teacher/short/${s.id}/close`, { method: "POST" });
+    onUpload();
+  }
+  async function reupload() {
+    await api(`/teacher/short/${s.id}/upload`, { method: "POST" });
     onUpload();
   }
   async function view() {
@@ -168,26 +238,33 @@ function ShortRow({ set: s, onUpload, onDelete, navigate }) {
       meta={`Sem ${s.semester} · ${formatShort(s.opened_at || s.created_at)} · status: ${s.status}`}
       done={s.status === "closed"}
     >
-      <div className="actions">
-        {s.status === "ready" && <button onClick={upload}>Upload</button>}
-        {s.status === "live" && (
-          <>
-            <Link className="btn" to={`/teacher/live-short/${s.id}`}>View Results</Link>
-            <button onClick={close}>Close & Grade</button>
-          </>
-        )}
-        {s.status === "closed" && (
-          <>
-            <Link className="btn" to={`/teacher/live-short/${s.id}`}>View Results</Link>
-            <button className="secondary" onClick={upload}>Re-upload to landing page</button>
-          </>
-        )}
-        <button className="secondary" onClick={view}>{paper ? "Hide" : "View Questions"}</button>
-        {s.status === "ready" && (
-          <button className="secondary" onClick={() => navigate(`/teacher/build-short/${s.id}`)}>Edit</button>
-        )}
-        <button className="danger" onClick={() => onDelete(s.id)}>Delete</button>
-      </div>
+      {editingLabel ? (
+        <LabelEditor
+          set={s}
+          table="short"
+          onDone={() => { setEditingLabel(false); onUpload(); }}
+          onCancel={() => setEditingLabel(false)}
+        />
+      ) : (
+        <div className="actions">
+          {s.status === "ready" && (
+            <>
+              <button onClick={upload}>Upload</button>
+              <button className="secondary" onClick={view}>{paper ? "Hide" : "View"}</button>
+              <button className="secondary" onClick={() => navigate(`/teacher/build-short/${s.id}`)}>Edit questions</button>
+            </>
+          )}
+          {s.status === "live" && <button onClick={close}>Close & grade</button>}
+          {s.status === "closed" && (
+            <>
+              <Link className="btn" to={`/teacher/live-short/${s.id}`}>View Results</Link>
+              <button className="secondary" onClick={reupload}>Re-upload</button>
+            </>
+          )}
+          <button className="secondary" onClick={() => setEditingLabel(true)}>Edit subject/topic</button>
+          <button className="danger" onClick={() => onDelete(s.id)}>Delete</button>
+        </div>
+      )}
       {paper && (
         <div style={{ marginTop: 14 }}>
           {paper.questions.map((q, i) => (
@@ -199,60 +276,63 @@ function ShortRow({ set: s, onUpload, onDelete, navigate }) {
   );
 }
 
-// Order a set of keys (topics or subjects) by when each one first appeared
-// (earliest opened_at), not alphabetically - e.g. for Python: List, then
-// Tuple, then Sets, in the order the teacher actually ran those papers.
-function orderByFirstAppearance(attempts, keyField, keys) {
-  const firstSeen = new Map();
-  for (const a of attempts) {
-    const k = a[keyField] || "—";
-    if (!keys.includes(k)) continue;
-    const t = new Date(a.opened_at).getTime();
-    if (!firstSeen.has(k) || t < firstSeen.get(k)) firstSeen.set(k, t);
-  }
-  return [...keys].sort((a, b) => (firstSeen.get(a) ?? 0) - (firstSeen.get(b) ?? 0));
-}
-
-// A teacher typing "Python" once and "python" (or with stray spacing)
-// another time shouldn't split into two separate subjects/topics on these
-// performance screens - they're the same subject. This folds every
-// attempt's subject/topic onto one consistent, trimmed, Title Case label
-// before any grouping happens, so "Python", "python" and " Python " all
-// collapse into a single "Python" bucket. It does NOT catch genuine
-// misspellings (e.g. "Pyhton" vs "Python" stay separate, since those really
-// are different text) - that's handled at paper-creation time instead, via
-// the subject/topic suggestions shown while building a new paper.
-function normalizeAttempts(attempts) {
-  const clean = (s) => toTitleCase((s || "").trim().replace(/\s+/g, " ")) || "—";
-  return attempts.map((a) => ({ ...a, subject: clean(a.subject), topic: clean(a.topic) }));
-}
-
 // Shared: given the raw /teacher/scores/detailed feed, aggregate one row
 // per student, optionally scoped to a single subject, with a breakdown
 // column per key (topic when scoped to a subject, subject when overall).
+// A student who never attempted one of the papers in scope still counts as
+// zero out of that paper's full marks in their average - it's not just
+// excluded from the denominator, so a student who skipped a test doesn't
+// get an inflated average from the tests they did take.
 function aggregate(attempts, { subjectFilter, keyField }) {
+  const scoped = subjectFilter ? attempts.filter((a) => a.subject === subjectFilter) : attempts;
+
+  // Full marks available for each breakdown column, so every student's
+  // average is measured against the same total regardless of what they
+  // actually attempted.
+  const keyTotals = new Map();
+  for (const a of scoped) {
+    const bKey = a[keyField] || "—";
+    const t = Number(a.total);
+    if (!keyTotals.has(bKey) || t > keyTotals.get(bKey)) keyTotals.set(bKey, t);
+  }
+
   const byStudent = new Map();
-  for (const a of attempts) {
-    if (subjectFilter && a.subject !== subjectFilter) continue;
+  for (const a of scoped) {
     const key = a.rollno;
-    if (!byStudent.has(key)) {
-      byStudent.set(key, { rollno: a.rollno, name: a.name, score: 0, total: 0, breakdown: {} });
-    }
+    if (!byStudent.has(key)) byStudent.set(key, { rollno: a.rollno, name: a.name, breakdown: {} });
     const row = byStudent.get(key);
-    row.score += Number(a.score);
-    row.total += Number(a.total);
     const bKey = a[keyField] || "—";
     if (!row.breakdown[bKey]) row.breakdown[bKey] = { score: 0, total: 0 };
     row.breakdown[bKey].score += Number(a.score);
     row.breakdown[bKey].total += Number(a.total);
   }
-  const rows = Array.from(byStudent.values()).map((r) => ({
-    ...r,
-    avg: r.total ? Math.round((100 * r.score) / r.total) : 0,
-  }));
+
+  const rows = Array.from(byStudent.values()).map((r) => {
+    let score = 0;
+    let total = 0;
+    for (const [bKey, maxTotal] of keyTotals) {
+      score += r.breakdown[bKey] ? r.breakdown[bKey].score : 0;
+      total += maxTotal; // counted whether this student attempted it or not
+    }
+    return { ...r, score, total, avg: total ? Math.round((100 * score) / total) : 0 };
+  });
   // Best performer on top.
   rows.sort((x, y) => y.avg - x.avg || y.score - x.score);
   return rows;
+}
+
+// Breakdown columns (topics within a subject, or subjects overall) are
+// ordered by how recently that column's paper was run - most recent first -
+// not alphabetically, so a fresh test always appears leftmost.
+function latestFirst(attempts, subjectFilter, keyField) {
+  const latest = new Map();
+  for (const a of attempts) {
+    if (subjectFilter && a.subject !== subjectFilter) continue;
+    const key = a[keyField] || "—";
+    const when = new Date(a.opened_at || 0).getTime();
+    if (!latest.has(key) || when > latest.get(key)) latest.set(key, when);
+  }
+  return [...latest.keys()].sort((x, y) => latest.get(y) - latest.get(x));
 }
 
 // Button per subject the teacher has ever run a paper for -> pick one ->
@@ -263,22 +343,18 @@ function SubjectPerformance() {
   const [subject, setSubject] = useState(null);
 
   useEffect(() => {
-    api("/teacher/scores/detailed")
-      .then((d) => setAttempts(normalizeAttempts(d.attempts)))
-      .catch((err) => setError(err.message));
+    api("/teacher/scores/detailed").then((d) => setAttempts(d.attempts)).catch((err) => setError(err.message));
   }, []);
 
   if (error) return <div className="error-banner">{error}</div>;
   if (attempts.length === 0) return <p className="muted">No attempts recorded yet.</p>;
 
-  const subjects = orderByFirstAppearance(attempts, "subject", [...new Set(attempts.map((a) => a.subject))]);
+  const subjects = [...new Set(attempts.map((a) => a.subject))].sort();
   const activeSubject = subject || subjects[0];
   const rows = aggregate(attempts, { subjectFilter: activeSubject, keyField: "topic" });
-  const topics = orderByFirstAppearance(
-    attempts.filter((a) => a.subject === activeSubject),
-    "topic",
-    [...new Set(rows.flatMap((r) => Object.keys(r.breakdown)))]
-  );
+  // Most recently-run topic first (e.g. if "List" was tested most recently,
+  // it leads, followed by "Tuple", then "Sets") - not alphabetical.
+  const topics = latestFirst(attempts, activeSubject, "topic");
 
   return (
     <>
@@ -325,16 +401,14 @@ function OverallPerformance() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    api("/teacher/scores/detailed")
-      .then((d) => setAttempts(normalizeAttempts(d.attempts)))
-      .catch((err) => setError(err.message));
+    api("/teacher/scores/detailed").then((d) => setAttempts(d.attempts)).catch((err) => setError(err.message));
   }, []);
 
   if (error) return <div className="error-banner">{error}</div>;
   if (attempts.length === 0) return <p className="muted">No attempts recorded yet.</p>;
 
   const rows = aggregate(attempts, { subjectFilter: null, keyField: "subject" });
-  const subjects = orderByFirstAppearance(attempts, "subject", [...new Set(rows.flatMap((r) => Object.keys(r.breakdown)))]);
+  const subjects = latestFirst(attempts, null, "subject");
 
   return (
     <table className="scoreboard">

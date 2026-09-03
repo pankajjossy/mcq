@@ -56,7 +56,7 @@ export default function StudentDashboard() {
 
       <h2>Today — pick your paper</h2>
       {today.length === 0 && shortToday.length === 0 && (
-        <p className="muted">No paper has been uploaded yet for your semester, or the 30-minute window has passed. Wait for your teacher to announce one.</p>
+        <p className="muted">No paper has been uploaded yet, or the 30-minute window has passed. Wait for your teacher to announce one.</p>
       )}
       {today.map((t) => (
         <div className="ticket" key={`mcq-${t.id}`}>

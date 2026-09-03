@@ -122,14 +122,14 @@ ${sourceText}
 }
 
 export interface DraftShortQuestion {
-  text: string;
+  question: string;
   maxMarks: number;
 }
 
-// Generates open-ended short-answer/essay question TEXT ONLY (no answer key -
-// these are graded later against a photographed handwritten answer). This is
-// the "Generate with Gemini" choice on the paper builder; the alternative is
-// the teacher just typing the questions in themselves.
+// Generates short-answer / essay question TEXT ONLY (no marking key - these
+// are open-ended and graded per-photo later by gradeShortAnswerPhoto). The
+// teacher picks how many to generate and can edit every word afterwards,
+// same review step as the MCQ-family types get.
 export async function generateShortAnswerQuestions(
   sourceText: string,
   count: number,
@@ -137,15 +137,17 @@ export async function generateShortAnswerQuestions(
 ): Promise<DraftShortQuestion[]> {
   const apiKey = Deno.env.get("GEMINI_API_KEY");
   if (!apiKey) throw new Error("GEMINI_API_KEY is not set.");
-  if (!count || count < 1) throw new Error("Ask for at least one short-answer question.");
 
-  const prompt = `You are creating a ${difficulty}-difficulty test for students, based ONLY on the material below.
-Write exactly ${count} open-ended short-answer/essay question(s) that require a written explanation
-(not a single word or a multiple-choice pick). Suggest a fair mark value for each (a whole number,
-typically 2-10 depending on how much the question asks for).
+  const n = Math.max(1, Math.min(20, Math.round(count) || 1));
 
-Return ONLY valid JSON (no markdown fences, no commentary): an array of objects shaped exactly like:
-{ "question": "string", "maxMarks": <number> }
+  const prompt = `You are creating a ${difficulty}-difficulty short-answer / essay test for students,
+based ONLY on the material below. Create exactly ${n} short-answer question(s) - open-ended
+questions a student would write a few sentences to a paragraph to answer by hand on paper
+(not multiple choice, not true/false, not fill-in-the-blank).
+
+Return ONLY valid JSON (no markdown fences, no commentary): an array of exactly ${n} objects,
+each shaped like:
+  { "question": "string", "maxMarks": <integer 1-10, higher for questions needing a fuller answer> }
 
 Source material:
 """
@@ -182,13 +184,14 @@ ${sourceText}
   } catch {
     throw new Error("Gemini did not return valid JSON. Try again or shorten the source text.");
   }
+
   if (!Array.isArray(parsed) || parsed.length === 0) throw new Error("Unexpected Gemini response shape.");
 
   return (parsed as Record<string, unknown>[]).map((q) => {
     const question = (q.question || "").toString();
     const maxMarks = Number(q.maxMarks);
     if (!question) throw new Error("Gemini produced a malformed short-answer question; please regenerate.");
-    return { text: question, maxMarks: Number.isFinite(maxMarks) && maxMarks > 0 ? maxMarks : 5 };
+    return { question, maxMarks: Number.isFinite(maxMarks) && maxMarks > 0 ? maxMarks : 5 };
   });
 }
 
