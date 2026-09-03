@@ -33,6 +33,12 @@ Deno.serve(async (req: Request) => {
       return await login(req);
     }
 
+    // Public: return admin display name for the home page header.
+    if (path === "/info" && req.method === "GET") {
+      const adminName = Deno.env.get("ADMIN_USERNAME") ?? "Admin";
+      return json({ name: adminName });
+    }
+
     // Everything else requires an admin token.
     const admin = requireAuth(req, "admin");
     if (!admin) return json({ error: "Not authorized." }, 401);

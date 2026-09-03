@@ -9,12 +9,15 @@ export default function Login() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [waking, setWaking] = useState(false);
+  const [adminName, setAdminName] = useState("");
   const navigate = useNavigate();
 
   useEffect(() => {
     // Render's free tier sleeps after idle; give people an honest status
     // instead of a login button that looks broken for up to a minute.
     wakeBackend(setWaking);
+    // Fetch admin display name for the page title.
+    api("/admin/info").then((d) => setAdminName(d.name || "")).catch(() => {});
   }, []);
 
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
@@ -59,8 +62,8 @@ export default function Login() {
 
   return (
     <div className="app-shell" style={{ maxWidth: 420 }}>
-      <h1 className="lms-title">LMS</h1>
-      <p className="lms-tagline">AI for better education</p>
+      <h1 className="lms-title">LMS AI for better education</h1>
+      <p className="lms-tagline">{adminName ? `(${adminName})` : ""}</p>
 
       <div className="role-toggle">
         <a className={role === "teacher" ? "active" : ""} onClick={() => { setRole("teacher"); setNotice(""); }}>Teacher</a>
