@@ -34,6 +34,11 @@ import { requireAuth } from "../_shared/jwt.ts";
 import { corsHeaders, handlePreflight, json } from "../_shared/cors.ts";
 import { generateQuestionsFromText, generateShortAnswerQuestions, type TypeCounts } from "../_shared/gemini.ts";
 
+// System-enforced Title Case: "python program" → "Python Program"
+function initcap(s: string): string {
+  return s.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 interface DraftQuestionIn {
   type: "mcq" | "true_false" | "fill_blank" | "match";
   question: string;
@@ -235,23 +240,19 @@ async function updateMcqSet(req: Request, id: string, teacherId: number) {
   return json({ ok: true });
 }
 
-// Fixes a typo'd subject/topic/semester (e.g. "Pyhton" -> "Python") on a
-// paper that's already live or closed, without touching its questions or
-// any attempts/scores already recorded against it - those keep pointing at
-// the same set id, so once the label is corrected the results simply
-// re-group under the corrected subject everywhere (dashboard, wall, etc).
-// Unlike the full PUT above, this is allowed at any status.
+// Fixes a typo'd subject/topic ONLY (semester/date/marks are not touched).
+// Title Case is enforced automatically by the system on every save.
 async function relabelSet(table: "mcq_sets" | "short_sets", req: Request, id: string, teacherId: number) {
   const body = await req.json().catch(() => ({}));
-  const subject = (body.subject || "").toString().trim();
-  const topic = (body.topic || "").toString().trim();
-  const semester = (body.semester || "").toString().trim();
-  if (!subject || !topic || !semester) {
-    return json({ error: "Subject, topic and semester are required." }, 400);
+  const subject = initcap((body.subject || "").toString().trim());
+  const topic = initcap((body.topic || "").toString().trim());
+  if (!subject || !topic) {
+    return json({ error: "Subject and topic are required." }, 400);
   }
+  // Semester is intentionally NOT updated here — teachers can only fix text typos.
   const result = await query(
-    `UPDATE ${table} SET subject=$1, topic=$2, semester=$3, title=$1 WHERE id=$4 AND teacher_id=$5 RETURNING id`,
-    [subject, topic, semester, id, teacherId]
+    `UPDATE ${table} SET subject=$1, topic=$2, title=$1 WHERE id=$3 AND teacher_id=$4 RETURNING id`,
+    [subject, topic, id, teacherId]
   );
   if (result.rowCount === 0) return json({ error: "Paper not found." }, 404);
   return json({ ok: true });
@@ -263,8 +264,8 @@ async function relabelSet(table: "mcq_sets" | "short_sets", req: Request, id: st
 // the canonical spelling used everywhere going forward.
 async function renameSubject(req: Request, teacherId: number) {
   const body = await req.json().catch(() => ({}));
-  const oldSubject = (body.oldSubject || "").toString().trim();
-  const newSubject = (body.newSubject || "").toString().trim();
+  const newSubject = initcap((body.newSubject || "").toString().trim());
+  const oldSubject = initcap((body.oldSubject || "").toString().trim());
   if (!oldSubject || !newSubject) {
     return json({ error: "oldSubject and newSubject are required." }, 400);
   }

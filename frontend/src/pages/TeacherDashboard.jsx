@@ -253,13 +253,14 @@ function ShortRow({ set: s, onUpload, onDelete, navigate }) {
   );
 }
 
-// ─── Inline label editor (fixes typo'd subject/topic/semester) ────────────────
-// Works at any status - ready, live, or closed. After saving, the corrected
-// label immediately re-groups all existing scores on the performance tabs.
+// ─── Inline label editor (subject/topic text only) ──────────────────────────
+// Semester, date and marks are intentionally NOT editable here — teachers
+// can only correct text typos. System auto-applies Title Case on save.
 function LabelEditor({ set: s, table, onDone, onCancel }) {
   const [subject, setSubject] = useState(s.subject);
   const [topic, setTopic] = useState(s.topic);
-  const [semester, setSemester] = useState(s.semester);
+  // System-enforced title case: "python program" → "Python Program"
+  function toTCase(str) { return str.replace(/\b\w/g, (c) => c.toUpperCase()); }
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -267,7 +268,7 @@ function LabelEditor({ set: s, table, onDone, onCancel }) {
     setError("");
     setBusy(true);
     try {
-      await api(`/teacher/${table}/${s.id}/label`, { method: "PATCH", body: { subject, topic, semester } });
+      await api(`/teacher/${table}/${s.id}/label`, { method: "PATCH", body: { subject: toTCase(subject.trim()), topic: toTCase(topic.trim()) } });
       onDone();
     } catch (err) {
       setError(err.message);
@@ -279,6 +280,7 @@ function LabelEditor({ set: s, table, onDone, onCancel }) {
   return (
     <div className="card label-editor" style={{ marginTop: 10 }}>
       <div className="label-editor-title">✏️ Fix Subject / Topic</div>
+      <div style={{ fontSize: "0.78em", opacity: 0.6, marginBottom: 8 }}>Only subject &amp; topic text can be corrected. Title Case is applied automatically by the system.</div>
       {error && <div className="error-banner">{error}</div>}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <div className="field" style={{ flex: "1 1 160px" }}>
@@ -289,17 +291,12 @@ function LabelEditor({ set: s, table, onDone, onCancel }) {
           <label>Topic</label>
           <input value={topic} onChange={(e) => setTopic(e.target.value)} />
         </div>
-        <div className="field" style={{ flex: "0 1 100px" }}>
-          <label>Semester</label>
-          <input value={semester} onChange={(e) => setSemester(e.target.value)} />
-        </div>
       </div>
       <div className="label-editor-hint">
-        Correcting a typo (e.g. "Pyhton" → "Python") re-groups all scores under
-        the corrected subject name instantly — no data is lost.
+        e.g. "Pyhton" → "Python Program" · Title Case applied automatically · Scores re-group instantly.
       </div>
       <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
-        <button onClick={save} disabled={busy || !subject.trim() || !topic.trim() || !semester.trim()}>
+        <button onClick={save} disabled={busy || !subject.trim() || !topic.trim()}>
           {busy ? "Saving…" : "Save Correction"}
         </button>
         <button className="secondary" onClick={onCancel}>Cancel</button>
