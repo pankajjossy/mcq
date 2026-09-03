@@ -9,10 +9,18 @@ export default function TeacherBuildShort() {
 
   const [subject, setSubject] = useState("");
   const [topic, setTopic] = useState("");
+  const [subjectOptions, setSubjectOptions] = useState([]);
+  const [topicOptions, setTopicOptions] = useState([]);
   const [semester, setSemester] = useState("");
   const [questions, setQuestions] = useState([{ text: "", maxMarks: 5 }]);
   const [error, setError] = useState("");
   const [loadingEdit, setLoadingEdit] = useState(!!editingId);
+
+  useEffect(() => {
+    api("/teacher/subjects")
+      .then((data) => { setSubjectOptions(data.subjects || []); setTopicOptions(data.topics || []); })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!editingId) return;
@@ -77,11 +85,13 @@ export default function TeacherBuildShort() {
       <div className="card">
         <div className="field">
           <label>Subject</label>
-          <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="e.g. History" />
+          <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="e.g. History" list="subject-options" />
+          <datalist id="subject-options">{subjectOptions.map((s) => <option key={s} value={s} />)}</datalist>
         </div>
         <div className="field">
           <label>Topic</label>
-          <input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="e.g. World War 2" />
+          <input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="e.g. World War 2" list="topic-options" />
+          <datalist id="topic-options">{topicOptions.map((t) => <option key={t} value={t} />)}</datalist>
         </div>
         <div className="field">
           <label>Semester</label>

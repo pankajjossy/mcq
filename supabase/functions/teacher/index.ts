@@ -25,11 +25,32 @@
 //   POST   /short/:id/upload                                       -> { ok }
 //   POST   /short/:id/close                                        -> { ok }
 //   GET    /short/:id/results                                      -> { results }
+//
+//   GET    /subjects                                                -> { subjects: string[], topics: string[] }
+//     Every subject/topic this teacher has ever used, for the "New Paper"
+//     screen to suggest from - so a teacher can pick "Python" instead of
+//     retyping it (and risking a typo like "Pyhton" that would otherwise
+//     show up as a separate subject on the performance screens).
 
 import { query } from "../_shared/db.ts";
 import { requireAuth } from "../_shared/jwt.ts";
 import { corsHeaders, handlePreflight, json } from "../_shared/cors.ts";
 import { generateQuestionsFromText, generateShortAnswerQuestions, type TypeCounts } from "../_shared/gemini.ts";
+
+// Subject/topic names are never treated as case-sensitive: "Python",
+// "python" and "PYTHON" are the same subject. Every save/update below
+// canonicalizes to a consistent Title Case before it ever reaches the
+// database, so new papers can't drift into near-duplicate subjects the
+// way old ones could. (A genuine misspelling like "Pyhton" is still a
+// different string on purpose - that's not a case issue, and guessing at
+// spelling similarity risks merging subjects that are actually different.)
+function titleCase(s: string): string {
+  return s
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase()
+    .replace(/(^|[\s'-])([a-z])/g, (_, sep, letter) => sep + letter.toUpperCase());
+}
 
 interface DraftQuestionIn {
   type: "mcq" | "true_false" | "fill_blank" | "match";
@@ -60,6 +81,7 @@ Deno.serve(async (req: Request) => {
     if (req.method === "POST" && path === "/mcq/save") return await saveMcq(req, user.id);
     if (req.method === "GET" && path === "/mcq") return await listMcqSets(user.id);
     if (req.method === "GET" && path === "/scores/detailed") return await detailedScores(user.id);
+    if (req.method === "GET" && path === "/subjects") return await subjectSuggestions(user.id);
 
     if (mcqIdMatch) {
       const [, id] = mcqIdMatch;
@@ -158,12 +180,15 @@ function validateQuestions(questions: unknown): questions is DraftQuestionIn[] {
 
 async function saveMcq(req: Request, teacherId: number) {
   const body = await req.json().catch(() => ({}));
-  const { subject, topic, semester, questions } = body as {
+  let { subject, topic, semester, questions } = body as {
     subject?: string;
     topic?: string;
     semester?: string;
     questions?: unknown;
   };
+  subject = subject ? titleCase(subject) : subject;
+  topic = topic ? titleCase(topic) : topic;
+  semester = semester?.trim();
   if (!subject || !topic || !semester || !validateQuestions(questions)) {
     return json({ error: "Subject, topic, semester and at least one valid question are required." }, 400);
   }
@@ -206,12 +231,15 @@ async function getMcqSet(id: string, teacherId: number) {
 // Editing is only allowed before the paper goes live.
 async function updateMcqSet(req: Request, id: string, teacherId: number) {
   const body = await req.json().catch(() => ({}));
-  const { subject, topic, semester, questions } = body as {
+  let { subject, topic, semester, questions } = body as {
     subject?: string;
     topic?: string;
     semester?: string;
     questions?: unknown;
   };
+  subject = subject ? titleCase(subject) : subject;
+  topic = topic ? titleCase(topic) : topic;
+  semester = semester?.trim();
   if (!subject || !topic || !semester || !validateQuestions(questions)) {
     return json({ error: "Subject, topic, semester and at least one valid question are required." }, 400);
   }
@@ -288,6 +316,23 @@ async function detailedScores(teacherId: number) {
   return json({ attempts: result.rows });
 }
 
+// Every subject/topic this teacher has used before, across MCQ-family and
+// short-answer papers alike, regardless of whether anyone's attempted them
+// yet (unlike /scores/detailed, which only knows about subjects with at
+// least one submitted attempt). Powers the suggestion list on "New Paper"
+// so a teacher can pick "Python" rather than retype it.
+async function subjectSuggestions(teacherId: number) {
+  const result = await query(
+    `SELECT subject, topic FROM mcq_sets WHERE teacher_id=$1
+     UNION
+     SELECT subject, topic FROM short_sets WHERE teacher_id=$1`,
+    [teacherId]
+  );
+  const subjects = [...new Set(result.rows.map((r: { subject: string }) => titleCase(r.subject || "")).filter(Boolean))].sort();
+  const topics = [...new Set(result.rows.map((r: { topic: string }) => titleCase(r.topic || "")).filter(Boolean))].sort();
+  return json({ subjects, topics });
+}
+
 // ---------- Short-answer (photo upload, AI-graded) ----------
 
 async function generateShort(req: Request) {
@@ -309,12 +354,15 @@ async function generateShort(req: Request) {
 
 async function saveShort(req: Request, teacherId: number) {
   const body = await req.json().catch(() => ({}));
-  const { subject, topic, semester, questions } = body as {
+  let { subject, topic, semester, questions } = body as {
     subject?: string;
     topic?: string;
     semester?: string;
     questions?: Array<{ text: string; maxMarks: number }>;
   };
+  subject = subject ? titleCase(subject) : subject;
+  topic = topic ? titleCase(topic) : topic;
+  semester = semester?.trim();
   if (!subject || !topic || !semester || !Array.isArray(questions) || questions.length === 0) {
     return json({ error: "Subject, topic, semester and at least one question are required." }, 400);
   }
@@ -363,12 +411,15 @@ async function getShortSet(id: string, teacherId: number) {
 
 async function updateShortSet(req: Request, id: string, teacherId: number) {
   const body = await req.json().catch(() => ({}));
-  const { subject, topic, semester, questions } = body as {
+  let { subject, topic, semester, questions } = body as {
     subject?: string;
     topic?: string;
     semester?: string;
     questions?: Array<{ text: string; maxMarks: number }>;
   };
+  subject = subject ? titleCase(subject) : subject;
+  topic = topic ? titleCase(topic) : topic;
+  semester = semester?.trim();
   if (!subject || !topic || !semester || !Array.isArray(questions) || questions.length === 0) {
     return json({ error: "Subject, topic, semester and at least one question are required." }, 400);
   }

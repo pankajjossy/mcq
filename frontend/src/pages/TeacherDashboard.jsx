@@ -104,7 +104,7 @@ function McqRow({ set: s, onUpload, onDelete, navigate }) {
     await api(`/teacher/mcq/${s.id}/upload`, { method: "POST" });
     onUpload();
   }
-  async function closeAndShow() {
+  async function closeAndFinalize() {
     await api(`/teacher/mcq/${s.id}/close`, { method: "POST" });
     navigate(`/teacher/live/${s.id}`);
   }
@@ -121,19 +121,22 @@ function McqRow({ set: s, onUpload, onDelete, navigate }) {
       done={s.status === "closed"}
     >
       <div className="actions">
-        {s.status === "ready" && (
+        {s.status === "ready" && <button onClick={upload}>Upload</button>}
+        {s.status === "live" && (
           <>
-            <button onClick={upload}>Upload</button>
-            <button className="secondary" onClick={view}>{paper ? "Hide" : "View"}</button>
-            <button className="secondary" onClick={() => navigate(`/teacher/build/${s.id}`)}>Edit</button>
+            <Link className="btn" to={`/teacher/live/${s.id}`}>View Results</Link>
+            <button onClick={closeAndFinalize}>Close & Finalize</button>
           </>
         )}
-        {s.status === "live" && <button onClick={closeAndShow}>Show Results</button>}
         {s.status === "closed" && (
           <>
             <Link className="btn" to={`/teacher/live/${s.id}`}>View Results</Link>
             <button className="secondary" onClick={upload}>Re-upload to landing page</button>
           </>
+        )}
+        <button className="secondary" onClick={view}>{paper ? "Hide" : "View MCQ"}</button>
+        {s.status === "ready" && (
+          <button className="secondary" onClick={() => navigate(`/teacher/build/${s.id}`)}>Edit</button>
         )}
         <button className="danger" onClick={() => onDelete(s.id)}>Delete</button>
       </div>
@@ -166,19 +169,22 @@ function ShortRow({ set: s, onUpload, onDelete, navigate }) {
       done={s.status === "closed"}
     >
       <div className="actions">
-        {s.status === "ready" && (
+        {s.status === "ready" && <button onClick={upload}>Upload</button>}
+        {s.status === "live" && (
           <>
-            <button onClick={upload}>Upload</button>
-            <button className="secondary" onClick={view}>{paper ? "Hide" : "View"}</button>
-            <button className="secondary" onClick={() => navigate(`/teacher/build-short/${s.id}`)}>Edit</button>
+            <Link className="btn" to={`/teacher/live-short/${s.id}`}>View Results</Link>
+            <button onClick={close}>Close & Grade</button>
           </>
         )}
-        {s.status === "live" && <button onClick={close}>Close & grade</button>}
         {s.status === "closed" && (
           <>
             <Link className="btn" to={`/teacher/live-short/${s.id}`}>View Results</Link>
             <button className="secondary" onClick={upload}>Re-upload to landing page</button>
           </>
+        )}
+        <button className="secondary" onClick={view}>{paper ? "Hide" : "View Questions"}</button>
+        {s.status === "ready" && (
+          <button className="secondary" onClick={() => navigate(`/teacher/build-short/${s.id}`)}>Edit</button>
         )}
         <button className="danger" onClick={() => onDelete(s.id)}>Delete</button>
       </div>
@@ -205,6 +211,20 @@ function orderByFirstAppearance(attempts, keyField, keys) {
     if (!firstSeen.has(k) || t < firstSeen.get(k)) firstSeen.set(k, t);
   }
   return [...keys].sort((a, b) => (firstSeen.get(a) ?? 0) - (firstSeen.get(b) ?? 0));
+}
+
+// A teacher typing "Python" once and "python" (or with stray spacing)
+// another time shouldn't split into two separate subjects/topics on these
+// performance screens - they're the same subject. This folds every
+// attempt's subject/topic onto one consistent, trimmed, Title Case label
+// before any grouping happens, so "Python", "python" and " Python " all
+// collapse into a single "Python" bucket. It does NOT catch genuine
+// misspellings (e.g. "Pyhton" vs "Python" stay separate, since those really
+// are different text) - that's handled at paper-creation time instead, via
+// the subject/topic suggestions shown while building a new paper.
+function normalizeAttempts(attempts) {
+  const clean = (s) => toTitleCase((s || "").trim().replace(/\s+/g, " ")) || "—";
+  return attempts.map((a) => ({ ...a, subject: clean(a.subject), topic: clean(a.topic) }));
 }
 
 // Shared: given the raw /teacher/scores/detailed feed, aggregate one row
@@ -243,7 +263,9 @@ function SubjectPerformance() {
   const [subject, setSubject] = useState(null);
 
   useEffect(() => {
-    api("/teacher/scores/detailed").then((d) => setAttempts(d.attempts)).catch((err) => setError(err.message));
+    api("/teacher/scores/detailed")
+      .then((d) => setAttempts(normalizeAttempts(d.attempts)))
+      .catch((err) => setError(err.message));
   }, []);
 
   if (error) return <div className="error-banner">{error}</div>;
@@ -303,7 +325,9 @@ function OverallPerformance() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    api("/teacher/scores/detailed").then((d) => setAttempts(d.attempts)).catch((err) => setError(err.message));
+    api("/teacher/scores/detailed")
+      .then((d) => setAttempts(normalizeAttempts(d.attempts)))
+      .catch((err) => setError(err.message));
   }, []);
 
   if (error) return <div className="error-banner">{error}</div>;

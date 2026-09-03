@@ -32,6 +32,12 @@ export default function TeacherBuildMcq() {
   const [subject, setSubject] = useState("");
   const [topic, setTopic] = useState("");
   const [semester, setSemester] = useState("");
+  // Previously-used subjects/topics, suggested via a native datalist so a
+  // teacher can pick "Python" instead of retyping it - retyping is exactly
+  // how "Python" vs "python" vs a stray "Pyhton" typo end up looking like
+  // three different subjects on the performance screens.
+  const [subjectOptions, setSubjectOptions] = useState([]);
+  const [topicOptions, setTopicOptions] = useState([]);
   const [difficulty, setDifficulty] = useState("medium");
   const [typeCounts, setTypeCounts] = useState({ mcq: 5, true_false: 0, fill_blank: 0, match: 0 });
   const [pastedText, setPastedText] = useState("");
@@ -53,6 +59,15 @@ export default function TeacherBuildMcq() {
   const [shortSource, setShortSource] = useState("manual"); // manual | gemini
   const [shortCount, setShortCount] = useState(3);
   const [shortBusy, setShortBusy] = useState(false);
+
+  useEffect(() => {
+    api("/teacher/subjects")
+      .then((data) => {
+        setSubjectOptions(data.subjects || []);
+        setTopicOptions(data.topics || []);
+      })
+      .catch(() => {}); // suggestions are a nicety, not worth surfacing an error banner for
+  }, []);
 
   useEffect(() => {
     if (!editingId) return;
@@ -212,11 +227,17 @@ export default function TeacherBuildMcq() {
       <div className="card">
         <div className="field">
           <label>Subject</label>
-          <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="e.g. Python" />
+          <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="e.g. Python" list="subject-options" />
+          <datalist id="subject-options">
+            {subjectOptions.map((s) => <option key={s} value={s} />)}
+          </datalist>
         </div>
         <div className="field">
           <label>Topic</label>
-          <input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="e.g. List, Tuple, Sets" />
+          <input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="e.g. List, Tuple, Sets" list="topic-options" />
+          <datalist id="topic-options">
+            {topicOptions.map((t) => <option key={t} value={t} />)}
+          </datalist>
         </div>
         <div className="field">
           <label>Semester</label>

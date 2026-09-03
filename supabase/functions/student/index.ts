@@ -22,7 +22,7 @@ import { gradeShortAnswerPhoto } from "../_shared/gemini.ts";
 // A paper only sits in the "exam hall" (today's list) for this long after
 // the teacher uploads it - after that it's expected to have already been
 // taken, and it drops off students' landing view into the dashboard history.
-const EXAM_HALL_MINUTES = 30;
+const EXAM_HALL_MINUTES = 35;
 
 Deno.serve(async (req: Request) => {
   const preflight = handlePreflight(req);
