@@ -3,6 +3,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { api, getSession, clearSession } from "../api.js";
 import Collapsible from "../components/Collapsible.jsx";
 import PaperReview from "../components/PaperReview.jsx";
+import { toTitleCase, paperLabel } from "../format.js";
 
 function formatWhen(dateStr) {
   const d = new Date(dateStr);
@@ -48,19 +49,19 @@ export default function StudentDashboard() {
       <div className="top-bar">
         <div>
           <span className="eyebrow">Exam Hall</span>
-          <h1>{session?.user?.name}</h1>
+          <h1>{toTitleCase(session?.user?.name)}</h1>
         </div>
         <button className="secondary" onClick={logout}>Log out</button>
       </div>
 
       <h2>Today — pick your paper</h2>
       {today.length === 0 && shortToday.length === 0 && (
-        <p className="muted">No paper has been uploaded yet, or the 40-minute window has passed. Wait for your teacher to announce one.</p>
+        <p className="muted">No paper has been uploaded yet for your semester, or the 30-minute window has passed. Wait for your teacher to announce one.</p>
       )}
       {today.map((t) => (
         <div className="ticket" key={`mcq-${t.id}`}>
           <div>
-            <div className="subject">{t.semester} {t.subject}</div>
+            <div className="subject">{t.semester} · {paperLabel(t.subject, t.topic)}</div>
             <div className="meta">{formatWhen(t.opened_at)}</div>
           </div>
           <Link className="btn" to={`/student/test/${t.id}`}>Appear</Link>
@@ -69,7 +70,7 @@ export default function StudentDashboard() {
       {shortToday.map((t) => (
         <div className="ticket" key={`short-${t.id}`}>
           <div>
-            <div className="subject">{t.semester} {t.subject} <span className="muted">(short answer)</span></div>
+            <div className="subject">{t.semester} · {paperLabel(t.subject, t.topic)} <span className="muted">(short answer)</span></div>
             <div className="meta">{formatWhen(t.opened_at)}</div>
           </div>
           <Link className="btn" to={`/student/short/${t.id}`}>Appear</Link>
@@ -119,7 +120,7 @@ export default function StudentDashboard() {
       {shortArchive.map((t) => (
         <Collapsible
           key={`short-a-${t.id}`}
-          head={`${t.subject} (short answer)`}
+          head={`${paperLabel(t.subject, t.topic)} (short answer)`}
           meta={formatWhen(t.submitted_at)}
           done
         >
@@ -131,7 +132,7 @@ export default function StudentDashboard() {
       {teachers.length === 0 && <p className="muted">Take a test to unlock your teacher's wall.</p>}
       {teachers.map((t) => (
         <div className="ticket" key={`wall-${t.id}`}>
-          <div className="subject">{t.name}</div>
+          <div className="subject">{toTitleCase(t.name)}</div>
           <Link className="btn" to={`/wall/${t.id}`}>Discuss</Link>
         </div>
       ))}
@@ -144,7 +145,7 @@ function ArchiveMcqRow({ t }) {
 
   return (
     <Collapsible
-      head={`${t.semester || ""} ${t.subject}`.trim()}
+      head={`${t.semester || ""} ${paperLabel(t.subject, t.topic)}`.trim()}
       meta={`${formatWhen(t.submitted_at)} · ${t.score}/${t.total}`}
       done
     >

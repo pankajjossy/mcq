@@ -8,6 +8,7 @@ export default function TeacherBuildShort() {
   const editingId = id || null;
 
   const [subject, setSubject] = useState("");
+  const [topic, setTopic] = useState("");
   const [semester, setSemester] = useState("");
   const [questions, setQuestions] = useState([{ text: "", maxMarks: 5 }]);
   const [error, setError] = useState("");
@@ -18,6 +19,7 @@ export default function TeacherBuildShort() {
     api(`/teacher/short/${editingId}`)
       .then((data) => {
         setSubject(data.set.subject);
+        setTopic(data.set.topic || "");
         setSemester(data.set.semester);
         setQuestions(data.questions.map((q) => ({ text: q.question_text, maxMarks: q.max_marks })));
       })
@@ -42,14 +44,14 @@ export default function TeacherBuildShort() {
   const totalMarks = questions.reduce((sum, q) => sum + (Number(q.maxMarks) || 0), 0);
 
   async function save() {
-    if (!subject || !semester) return setError("Enter subject and semester before saving.");
+    if (!subject || !topic || !semester) return setError("Enter subject, topic and semester before saving.");
     if (questions.some((q) => !q.text.trim())) return setError("Every question needs text.");
     setError("");
     try {
       if (editingId) {
-        await api(`/teacher/short/${editingId}`, { method: "PUT", body: { subject, semester, questions } });
+        await api(`/teacher/short/${editingId}`, { method: "PUT", body: { subject, topic, semester, questions } });
       } else {
-        await api("/teacher/short/save", { method: "POST", body: { subject, semester, questions } });
+        await api("/teacher/short/save", { method: "POST", body: { subject, topic, semester, questions } });
       }
       navigate("/teacher");
     } catch (err) {
@@ -76,6 +78,10 @@ export default function TeacherBuildShort() {
         <div className="field">
           <label>Subject</label>
           <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="e.g. History" />
+        </div>
+        <div className="field">
+          <label>Topic</label>
+          <input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="e.g. World War 2" />
         </div>
         <div className="field">
           <label>Semester</label>

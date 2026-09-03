@@ -121,6 +121,77 @@ ${sourceText}
   })) as DraftQuestion[];
 }
 
+export interface DraftShortQuestion {
+  text: string;
+  maxMarks: number;
+}
+
+// Generates open-ended short-answer/essay question TEXT ONLY (no answer key -
+// these are graded later against a photographed handwritten answer). This is
+// the "Generate with Gemini" choice on the paper builder; the alternative is
+// the teacher just typing the questions in themselves.
+export async function generateShortAnswerQuestions(
+  sourceText: string,
+  count: number,
+  difficulty: "easy" | "medium" | "hard" = "medium"
+): Promise<DraftShortQuestion[]> {
+  const apiKey = Deno.env.get("GEMINI_API_KEY");
+  if (!apiKey) throw new Error("GEMINI_API_KEY is not set.");
+  if (!count || count < 1) throw new Error("Ask for at least one short-answer question.");
+
+  const prompt = `You are creating a ${difficulty}-difficulty test for students, based ONLY on the material below.
+Write exactly ${count} open-ended short-answer/essay question(s) that require a written explanation
+(not a single word or a multiple-choice pick). Suggest a fair mark value for each (a whole number,
+typically 2-10 depending on how much the question asks for).
+
+Return ONLY valid JSON (no markdown fences, no commentary): an array of objects shaped exactly like:
+{ "question": "string", "maxMarks": <number> }
+
+Source material:
+"""
+${sourceText}
+"""`;
+
+  const resp = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey,
+      },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { responseMimeType: "application/json" },
+      }),
+    }
+  );
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`Gemini API error: ${resp.status} ${errText}`);
+  }
+
+  const data = await resp.json();
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new Error("Gemini returned no content.");
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error("Gemini did not return valid JSON. Try again or shorten the source text.");
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) throw new Error("Unexpected Gemini response shape.");
+
+  return (parsed as Record<string, unknown>[]).map((q) => {
+    const question = (q.question || "").toString();
+    const maxMarks = Number(q.maxMarks);
+    if (!question) throw new Error("Gemini produced a malformed short-answer question; please regenerate.");
+    return { text: question, maxMarks: Number.isFinite(maxMarks) && maxMarks > 0 ? maxMarks : 5 };
+  });
+}
+
 interface GradeResult {
   marks: number;
   feedback: string;

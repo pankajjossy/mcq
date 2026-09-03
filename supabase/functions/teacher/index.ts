@@ -3,21 +3,24 @@
 // Routes, matched by path after /functions/v1/teacher:
 //   MCQ-family papers (mcq / true_false / fill_blank / match, mixable in one paper)
 //   POST   /mcq/generate     { text, difficulty, typeCounts }      -> { questions }
-//   POST   /mcq/save         { subject, semester, questions }      -> { id }
+//   POST   /mcq/save         { subject, topic, semester, questions } -> { id }
 //   GET    /mcq                                                    -> { sets }
 //   GET    /mcq/:id                                                -> { set, questions }
-//   PUT    /mcq/:id          { subject, semester, questions }      -> { ok }   ('ready' only)
+//   PUT    /mcq/:id          { subject, topic, semester, questions } -> { ok }   ('ready' only)
 //   DELETE /mcq/:id                                                -> { ok }
 //   POST   /mcq/:id/upload                                         -> { ok }
 //   POST   /mcq/:id/close                                          -> { ok }
 //   GET    /mcq/:id/results                                        -> { results }
 //   GET    /scores/detailed                                        -> { attempts }  (one row per student per test)
 //
-//   Short-answer papers (photo upload, AI-graded)
-//   POST   /short/save       { subject, semester, questions }      -> { id }
+//   Short-answer papers (photo upload, AI-graded) - also reachable as a
+//   choice from the same "New Paper" screen as the MCQ-family types above.
+//   POST   /short/save       { subject, topic, semester, questions } -> { id }
+//   POST   /short/generate   { text, count, difficulty }             -> { questions }  (question text only, no key -
+//                                                                        the alternative to typing them in yourself)
 //   GET    /short                                                  -> { sets }
 //   GET    /short/:id                                              -> { set, questions }
-//   PUT    /short/:id        { subject, semester, questions }      -> { ok }
+//   PUT    /short/:id        { subject, topic, semester, questions } -> { ok }
 //   DELETE /short/:id                                              -> { ok }
 //   POST   /short/:id/upload                                       -> { ok }
 //   POST   /short/:id/close                                        -> { ok }
@@ -26,7 +29,7 @@
 import { query } from "../_shared/db.ts";
 import { requireAuth } from "../_shared/jwt.ts";
 import { corsHeaders, handlePreflight, json } from "../_shared/cors.ts";
-import { generateQuestionsFromText, type TypeCounts } from "../_shared/gemini.ts";
+import { generateQuestionsFromText, generateShortAnswerQuestions, type TypeCounts } from "../_shared/gemini.ts";
 
 interface DraftQuestionIn {
   type: "mcq" | "true_false" | "fill_blank" | "match";
@@ -72,6 +75,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (req.method === "POST" && path === "/short/save") return await saveShort(req, user.id);
+    if (req.method === "POST" && path === "/short/generate") return await generateShort(req);
     if (req.method === "GET" && path === "/short") return await listShortSets(user.id);
     if (shortIdMatch) {
       const [, id] = shortIdMatch;
@@ -154,14 +158,19 @@ function validateQuestions(questions: unknown): questions is DraftQuestionIn[] {
 
 async function saveMcq(req: Request, teacherId: number) {
   const body = await req.json().catch(() => ({}));
-  const { subject, semester, questions } = body as { subject?: string; semester?: string; questions?: unknown };
-  if (!subject || !semester || !validateQuestions(questions)) {
-    return json({ error: "Subject, semester and at least one valid question are required." }, 400);
+  const { subject, topic, semester, questions } = body as {
+    subject?: string;
+    topic?: string;
+    semester?: string;
+    questions?: unknown;
+  };
+  if (!subject || !topic || !semester || !validateQuestions(questions)) {
+    return json({ error: "Subject, topic, semester and at least one valid question are required." }, 400);
   }
 
   const setResult = await query(
-    "INSERT INTO mcq_sets (teacher_id, subject, semester, title, status) VALUES ($1,$2,$3,$4,'ready') RETURNING id",
-    [teacherId, subject, semester, subject]
+    "INSERT INTO mcq_sets (teacher_id, subject, topic, semester, title, status) VALUES ($1,$2,$3,$4,$5,'ready') RETURNING id",
+    [teacherId, subject, topic, semester, subject]
   );
   const setId = setResult.rows[0].id;
   await insertQuestions(setId, questions as DraftQuestionIn[]);
@@ -170,7 +179,7 @@ async function saveMcq(req: Request, teacherId: number) {
 
 async function listMcqSets(teacherId: number) {
   const result = await query(
-    `SELECT ms.id, ms.subject, ms.semester, ms.title, ms.status, ms.created_at, ms.opened_at, ms.closed_at,
+    `SELECT ms.id, ms.subject, ms.topic, ms.semester, ms.title, ms.status, ms.created_at, ms.opened_at, ms.closed_at,
             COALESCE(SUM(mq.marks), 0) AS total_marks
      FROM mcq_sets ms LEFT JOIN mcq_questions mq ON mq.mcq_set_id = ms.id
      WHERE ms.teacher_id=$1
@@ -197,9 +206,14 @@ async function getMcqSet(id: string, teacherId: number) {
 // Editing is only allowed before the paper goes live.
 async function updateMcqSet(req: Request, id: string, teacherId: number) {
   const body = await req.json().catch(() => ({}));
-  const { subject, semester, questions } = body as { subject?: string; semester?: string; questions?: unknown };
-  if (!subject || !semester || !validateQuestions(questions)) {
-    return json({ error: "Subject, semester and at least one valid question are required." }, 400);
+  const { subject, topic, semester, questions } = body as {
+    subject?: string;
+    topic?: string;
+    semester?: string;
+    questions?: unknown;
+  };
+  if (!subject || !topic || !semester || !validateQuestions(questions)) {
+    return json({ error: "Subject, topic, semester and at least one valid question are required." }, 400);
   }
 
   const setCheck = await query("SELECT status FROM mcq_sets WHERE id=$1 AND teacher_id=$2", [id, teacherId]);
@@ -208,7 +222,7 @@ async function updateMcqSet(req: Request, id: string, teacherId: number) {
     return json({ error: "This paper has already been uploaded and can no longer be edited." }, 409);
   }
 
-  await query("UPDATE mcq_sets SET subject=$1, semester=$2, title=$1 WHERE id=$3", [subject, semester, id]);
+  await query("UPDATE mcq_sets SET subject=$1, topic=$2, semester=$3, title=$1 WHERE id=$4", [subject, topic, semester, id]);
   await query("DELETE FROM mcq_questions WHERE mcq_set_id=$1", [id]);
   await insertQuestions(Number(id), questions as DraftQuestionIn[]);
   return json({ ok: true });
@@ -255,13 +269,14 @@ async function liveResults(id: string, teacherId: number) {
   return json({ results: result.rows });
 }
 
-// One row per (student, test). The frontend builds both the subject-wise
-// pivot (grouped by subject+semester, avg column first, newest test first)
-// and the overall tab (everything summed per student regardless of subject)
-// from this same feed.
+// One row per (student, test). The frontend builds the Subject Performance
+// view (pick a subject, then a table broken down topic by topic) and the
+// Overall Performance view (every subject summed per student) from this
+// same feed. avg is always shown before the breakdown columns, and rows
+// are sorted with the best performer on top - both views do that client-side.
 async function detailedScores(teacherId: number) {
   const result = await query(
-    `SELECT ms.id AS mcq_set_id, ms.subject, ms.semester, ms.opened_at,
+    `SELECT ms.id AS mcq_set_id, ms.subject, ms.topic, ms.semester, ms.opened_at,
             s.rollno, s.name, a.score, a.total, a.submitted_at
      FROM attempts a
      JOIN mcq_sets ms ON ms.id = a.mcq_set_id
@@ -275,15 +290,33 @@ async function detailedScores(teacherId: number) {
 
 // ---------- Short-answer (photo upload, AI-graded) ----------
 
+async function generateShort(req: Request) {
+  const body = await req.json().catch(() => ({}));
+  const sourceText = (body.text || "").toString();
+  const count = Number(body.count) || 3;
+  const difficulty = (body.difficulty || "medium") as "easy" | "medium" | "hard";
+
+  if (!sourceText || sourceText.trim().length < 20) {
+    return json({ error: "Please paste more text - at least a full paragraph." }, 400);
+  }
+  try {
+    const questions = await generateShortAnswerQuestions(sourceText, count, difficulty);
+    return json({ questions });
+  } catch (err) {
+    return json({ error: (err as Error).message || "Could not generate questions." }, 500);
+  }
+}
+
 async function saveShort(req: Request, teacherId: number) {
   const body = await req.json().catch(() => ({}));
-  const { subject, semester, questions } = body as {
+  const { subject, topic, semester, questions } = body as {
     subject?: string;
+    topic?: string;
     semester?: string;
     questions?: Array<{ text: string; maxMarks: number }>;
   };
-  if (!subject || !semester || !Array.isArray(questions) || questions.length === 0) {
-    return json({ error: "Subject, semester and at least one question are required." }, 400);
+  if (!subject || !topic || !semester || !Array.isArray(questions) || questions.length === 0) {
+    return json({ error: "Subject, topic, semester and at least one question are required." }, 400);
   }
   for (const q of questions) {
     if (!q.text || !Number.isFinite(Number(q.maxMarks)) || Number(q.maxMarks) <= 0) {
@@ -292,8 +325,8 @@ async function saveShort(req: Request, teacherId: number) {
   }
 
   const setResult = await query(
-    "INSERT INTO short_sets (teacher_id, subject, semester, title, status) VALUES ($1,$2,$3,$4,'ready') RETURNING id",
-    [teacherId, subject, semester, subject]
+    "INSERT INTO short_sets (teacher_id, subject, topic, semester, title, status) VALUES ($1,$2,$3,$4,$5,'ready') RETURNING id",
+    [teacherId, subject, topic, semester, subject]
   );
   const setId = setResult.rows[0].id;
 
@@ -309,7 +342,7 @@ async function saveShort(req: Request, teacherId: number) {
 
 async function listShortSets(teacherId: number) {
   const result = await query(
-    `SELECT id, subject, semester, title, status, created_at, opened_at, closed_at
+    `SELECT id, subject, topic, semester, title, status, created_at, opened_at, closed_at
      FROM short_sets WHERE teacher_id=$1
      ORDER BY COALESCE(opened_at, created_at) DESC`,
     [teacherId]
@@ -330,13 +363,14 @@ async function getShortSet(id: string, teacherId: number) {
 
 async function updateShortSet(req: Request, id: string, teacherId: number) {
   const body = await req.json().catch(() => ({}));
-  const { subject, semester, questions } = body as {
+  const { subject, topic, semester, questions } = body as {
     subject?: string;
+    topic?: string;
     semester?: string;
     questions?: Array<{ text: string; maxMarks: number }>;
   };
-  if (!subject || !semester || !Array.isArray(questions) || questions.length === 0) {
-    return json({ error: "Subject, semester and at least one question are required." }, 400);
+  if (!subject || !topic || !semester || !Array.isArray(questions) || questions.length === 0) {
+    return json({ error: "Subject, topic, semester and at least one question are required." }, 400);
   }
 
   const setCheck = await query("SELECT status FROM short_sets WHERE id=$1 AND teacher_id=$2", [id, teacherId]);
@@ -345,7 +379,7 @@ async function updateShortSet(req: Request, id: string, teacherId: number) {
     return json({ error: "This paper has already been uploaded and can no longer be edited." }, 409);
   }
 
-  await query("UPDATE short_sets SET subject=$1, semester=$2, title=$1 WHERE id=$3", [subject, semester, id]);
+  await query("UPDATE short_sets SET subject=$1, topic=$2, semester=$3, title=$1 WHERE id=$4", [subject, topic, semester, id]);
   await query("DELETE FROM short_questions WHERE short_set_id=$1", [id]);
   for (let i = 0; i < questions.length; i++) {
     const q = questions[i];
