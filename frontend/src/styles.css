@@ -287,8 +287,19 @@ table.scoreboard td.avg-col { font-weight: 700; color: var(--accent); }
 /* Best performer on top of any performance table, gold highlight. */
 table.scoreboard tr.winner-row { background: rgba(193, 163, 90, 0.2); font-weight: 700; color: var(--accent); }
 
-/* Absent / not-attempted dash in scoreboard cells */
-.absent-dash { opacity: 0.45; }
+/* ✏️ Edit Subject/Topic button — always visible in actions row, gold-tinted */
+.edit-label-btn {
+  background: rgba(193,163,90,0.15);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  font-size: 15px;
+  padding: 9px 16px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-weight: 600;
+  transition: background 0.15s;
+}
+.edit-label-btn:hover { background: rgba(193,163,90,0.3); }
 
 /* Pencil icon button embedded in collapsible head to trigger label editor */
 .icon-edit-btn {

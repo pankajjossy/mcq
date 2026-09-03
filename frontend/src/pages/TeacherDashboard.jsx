@@ -109,9 +109,7 @@ function McqRow({ set: s, onUpload, onDelete, navigate }) {
     await api(`/teacher/mcq/${s.id}/close`, { method: "POST" });
     navigate(`/teacher/live/${s.id}`);
   }
-  // Re-upload: creates a fresh "live" window with today's date/time as opened_at.
-  // Students who already submitted won't see it again (server excludes existing
-  // attempts). This is intentionally the same endpoint as first upload.
+  // Re-upload: same paper, new opened_at = now() in DB, fresh live window.
   async function reupload() {
     await api(`/teacher/mcq/${s.id}/upload`, { method: "POST" });
     onUpload();
@@ -122,25 +120,14 @@ function McqRow({ set: s, onUpload, onDelete, navigate }) {
     setPaper(data);
   }
 
-  const headLabel = (
-    <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      {paperLabel(s.subject, s.topic)}
-      {/* Pencil icon triggers label editor without expanding the collapsible body */}
-      <button
-        className="icon-edit-btn"
-        title="Fix subject / topic typo"
-        onClick={(e) => { e.stopPropagation(); setEditingLabel(true); }}
-      >
-        ✏️
-      </button>
-    </span>
-  );
-
   return (
+    // forceOpen={editingLabel} auto-expands the card when teacher clicks
+    // "Edit Subject/Topic" so the correction form is immediately visible.
     <Collapsible
-      head={headLabel}
+      head={paperLabel(s.subject, s.topic)}
       meta={`Sem ${s.semester} · ${formatShort(s.opened_at || s.created_at)} · status: ${s.status} · ${s.total_marks} marks`}
       done={s.status === "closed"}
+      forceOpen={editingLabel}
     >
       {editingLabel ? (
         <LabelEditor
@@ -160,7 +147,6 @@ function McqRow({ set: s, onUpload, onDelete, navigate }) {
                 <button className="secondary" onClick={() => navigate(`/teacher/build/${s.id}`)}>Edit Questions</button>
               </>
             )}
-
             {/* ── live ── */}
             {s.status === "live" && (
               <>
@@ -168,8 +154,7 @@ function McqRow({ set: s, onUpload, onDelete, navigate }) {
                 <button className="secondary" onClick={view}>{paper ? "Hide" : "View MCQ"}</button>
               </>
             )}
-
-            {/* ── closed: all four actions the user asked for ── */}
+            {/* ── closed: Re-upload (new date), View Results, View MCQ, Edit MCQ ── */}
             {s.status === "closed" && (
               <>
                 <button onClick={reupload}>Re-upload</button>
@@ -178,9 +163,10 @@ function McqRow({ set: s, onUpload, onDelete, navigate }) {
                 <button className="secondary" onClick={() => navigate(`/teacher/build/${s.id}`)}>Edit MCQ</button>
               </>
             )}
-
-            {/* Always available: fix a subject/topic typo, then delete */}
-            <button className="secondary" onClick={() => setEditingLabel(true)}>Edit Subject/Topic</button>
+            {/* Always available — clicking this expands the card and shows the
+                correction form. Permanently updates subject/topic in the DB,
+                so scores re-group under the corrected subject name instantly. */}
+            <button className="edit-label-btn" onClick={() => setEditingLabel(true)}>✏️ Edit Subject/Topic</button>
             <button className="danger" onClick={() => onDelete(s.id)}>Delete</button>
           </div>
           {paper && <div style={{ marginTop: 14 }}><PaperReview questions={paper.questions} /></div>}
@@ -213,24 +199,12 @@ function ShortRow({ set: s, onUpload, onDelete, navigate }) {
     setPaper(data);
   }
 
-  const headLabel = (
-    <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      {`${paperLabel(s.subject, s.topic)} (short answer)`}
-      <button
-        className="icon-edit-btn"
-        title="Fix subject / topic typo"
-        onClick={(e) => { e.stopPropagation(); setEditingLabel(true); }}
-      >
-        ✏️
-      </button>
-    </span>
-  );
-
   return (
     <Collapsible
-      head={headLabel}
+      head={`${paperLabel(s.subject, s.topic)} (short answer)`}
       meta={`Sem ${s.semester} · ${formatShort(s.opened_at || s.created_at)} · status: ${s.status}`}
       done={s.status === "closed"}
+      forceOpen={editingLabel}
     >
       {editingLabel ? (
         <LabelEditor
