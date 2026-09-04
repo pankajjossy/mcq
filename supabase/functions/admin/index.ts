@@ -10,6 +10,10 @@
 //   POST  /students/:id/reset-password
 //   DELETE /teachers/:id
 //   DELETE /students/:id
+//   GET  /principals?q=<search>
+//   PATCH /principals/:id
+//   POST  /principals/:id/reset-password
+//   DELETE /principals/:id
 
 import bcrypt from "npm:bcryptjs@2.4.3";
 import { query } from "../_shared/db.ts";
@@ -36,6 +40,7 @@ Deno.serve(async (req: Request) => {
     // LIST with optional search
     if (path === "/teachers" && req.method === "GET") return await listTeachers(url);
     if (path === "/students" && req.method === "GET") return await listStudents(url);
+    if (path === "/principals" && req.method === "GET") return await listPrincipals(url);
 
     // PATCH (update fields)
     const teacherPatch = path.match(/^\/teachers\/(\d+)$/);
@@ -44,6 +49,9 @@ Deno.serve(async (req: Request) => {
     const studentPatch = path.match(/^\/students\/(\d+)$/);
     if (studentPatch && req.method === "PATCH") return await updateStudent(req, Number(studentPatch[1]));
 
+    const principalPatch = path.match(/^\/principals\/(\d+)$/);
+    if (principalPatch && req.method === "PATCH") return await updatePrincipal(req, Number(principalPatch[1]));
+
     // RESET PASSWORD
     const teacherReset = path.match(/^\/teachers\/(\d+)\/reset-password$/);
     if (teacherReset && req.method === "POST") return await resetPassword(req, "teachers", Number(teacherReset[1]));
@@ -51,12 +59,18 @@ Deno.serve(async (req: Request) => {
     const studentReset = path.match(/^\/students\/(\d+)\/reset-password$/);
     if (studentReset && req.method === "POST") return await resetPassword(req, "students", Number(studentReset[1]));
 
+    const principalReset = path.match(/^\/principals\/(\d+)\/reset-password$/);
+    if (principalReset && req.method === "POST") return await resetPassword(req, "principals", Number(principalReset[1]));
+
     // DELETE
     const teacherDel = path.match(/^\/teachers\/(\d+)$/);
     if (teacherDel && req.method === "DELETE") return await deleteRecord("teachers", Number(teacherDel[1]));
 
     const studentDel = path.match(/^\/students\/(\d+)$/);
     if (studentDel && req.method === "DELETE") return await deleteRecord("students", Number(studentDel[1]));
+
+    const principalDel = path.match(/^\/principals\/(\d+)$/);
+    if (principalDel && req.method === "DELETE") return await deleteRecord("principals", Number(principalDel[1]));
 
     return json({ error: "Not found." }, 404);
   } catch (err) {
@@ -99,6 +113,17 @@ async function listStudents(url: URL) {
   return json({ students: result.rows });
 }
 
+async function listPrincipals(url: URL) {
+  const q = (url.searchParams.get("q") || "").trim();
+  const result = q
+    ? await query(
+        "SELECT id, name, login_name, created_at FROM principals WHERE name ILIKE $1 ORDER BY name",
+        [`%${q}%`]
+      )
+    : await query("SELECT id, name, login_name, created_at FROM principals ORDER BY name");
+  return json({ principals: result.rows });
+}
+
 async function updateTeacher(req: Request, id: number) {
   const body = await req.json().catch(() => ({})) as Record<string, unknown>;
   const { name, loginName, department } = body as { name?: string; loginName?: string; department?: string };
@@ -112,6 +137,25 @@ async function updateTeacher(req: Request, id: number) {
   try {
     const r = await query(`UPDATE teachers SET ${sets.join(",")} WHERE id=$${vals.length} RETURNING id`, vals);
     if (r.rowCount === 0) return json({ error: "Teacher not found." }, 404);
+    return json({ ok: true });
+  } catch (e) {
+    if ((e as { code?: string }).code === "23505") return json({ error: "That login name is already taken." }, 409);
+    throw e;
+  }
+}
+
+async function updatePrincipal(req: Request, id: number) {
+  const body = await req.json().catch(() => ({})) as Record<string, unknown>;
+  const { name, loginName } = body as { name?: string; loginName?: string };
+  const sets: string[] = [];
+  const vals: unknown[] = [];
+  if (name?.trim()) { sets.push(`name=$${sets.length + 1}`); vals.push(name.trim()); }
+  if (loginName?.trim()) { sets.push(`login_name=$${sets.length + 1}`); vals.push(loginName.trim()); }
+  if (sets.length === 0) return json({ error: "Nothing to update." }, 400);
+  vals.push(id);
+  try {
+    const r = await query(`UPDATE principals SET ${sets.join(",")} WHERE id=$${vals.length} RETURNING id`, vals);
+    if (r.rowCount === 0) return json({ error: "Principal not found." }, 404);
     return json({ ok: true });
   } catch (e) {
     if ((e as { code?: string }).code === "23505") return json({ error: "That login name is already taken." }, 409);
@@ -140,7 +184,7 @@ async function updateStudent(req: Request, id: number) {
   }
 }
 
-async function resetPassword(req: Request, table: "teachers" | "students", id: number) {
+async function resetPassword(req: Request, table: "teachers" | "students" | "principals", id: number) {
   const body = await req.json().catch(() => ({})) as Record<string, unknown>;
   const { newPassword } = body as { newPassword?: string };
   if (!newPassword || newPassword.length < 4) return json({ error: "Password must be at least 4 characters." }, 400);
@@ -150,7 +194,7 @@ async function resetPassword(req: Request, table: "teachers" | "students", id: n
   return json({ ok: true });
 }
 
-async function deleteRecord(table: "teachers" | "students", id: number) {
+async function deleteRecord(table: "teachers" | "students" | "principals", id: number) {
   const r = await query(`DELETE FROM ${table} WHERE id=$1 RETURNING id`, [id]);
   if (r.rowCount === 0) return json({ error: "Not found." }, 404);
   return json({ ok: true });

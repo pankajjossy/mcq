@@ -122,8 +122,8 @@ async function createPost(req: Request, teacherId: string, user: AuthUser) {
   if (teacherCheck.rowCount === 0) return json({ error: "Teacher not found." }, 404);
 
   const result = await query(
-    `INSERT INTO wall_posts (teacher_id, author_role, author_teacher_id, author_student_id, mcq_set_id, body)
-     VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+    `INSERT INTO wall_posts (teacher_id, author_role, author_teacher_id, author_student_id, mcq_set_id, body, author_name)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
     [
       teacherId,
       user.role,
@@ -131,6 +131,7 @@ async function createPost(req: Request, teacherId: string, user: AuthUser) {
       user.role === "student" ? user.id : null,
       mcqSetId,
       text,
+      user.name
     ]
   );
   return json({ id: result.rows[0].id });
@@ -171,9 +172,16 @@ async function createReply(req: Request, postId: string, user: AuthUser) {
   if (postCheck.rowCount === 0) return json({ error: "Post not found." }, 404);
 
   const result = await query(
-    `INSERT INTO wall_replies (post_id, author_role, author_teacher_id, author_student_id, body)
-     VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-    [postId, user.role, user.role === "teacher" ? user.id : null, user.role === "student" ? user.id : null, text]
+    `INSERT INTO wall_replies (post_id, author_role, author_teacher_id, author_student_id, body, author_name)
+     VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+    [
+      postId,
+      user.role,
+      user.role === "teacher" ? user.id : null,
+      user.role === "student" ? user.id : null,
+      text,
+      user.name
+    ]
   );
   return json({ id: result.rows[0].id });
 }

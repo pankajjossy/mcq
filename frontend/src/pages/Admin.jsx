@@ -72,6 +72,7 @@ function AdminPanel({ onLogout }) {
   const [debouncedQ, setDebouncedQ] = useState("");
   const [teachers, setTeachers] = useState(null);
   const [students, setStudents] = useState(null);
+  const [principals, setPrincipals] = useState(null);
   const [error, setError] = useState("");
 
   // Debounce search input by 350ms
@@ -82,6 +83,7 @@ function AdminPanel({ onLogout }) {
 
   useEffect(() => { loadTeachers(); }, [debouncedQ]);
   useEffect(() => { if (tab === "students") loadStudents(); }, [debouncedQ, tab]);
+  useEffect(() => { if (tab === "principals") loadPrincipals(); }, [debouncedQ, tab]);
 
   async function loadTeachers() {
     try {
@@ -97,9 +99,17 @@ function AdminPanel({ onLogout }) {
     } catch (e) { setError(e.message); }
   }
 
+  async function loadPrincipals() {
+    try {
+      const d = await adminApi(`/principals${debouncedQ ? `?q=${encodeURIComponent(debouncedQ)}` : ""}`);
+      setPrincipals(d.principals);
+    } catch (e) { setError(e.message); }
+  }
+
   function onTabChange(t) {
     setTab(t);
     if (t === "students" && !students) loadStudents();
+    if (t === "principals" && !principals) loadPrincipals();
   }
 
   return (
@@ -132,6 +142,9 @@ function AdminPanel({ onLogout }) {
         <button className={tab === "students" ? "active" : ""} onClick={() => onTabChange("students")}>
           Students {students ? `(${students.length})` : ""}
         </button>
+        <button className={tab === "principals" ? "active" : ""} onClick={() => onTabChange("principals")}>
+          Principals {principals ? `(${principals.length})` : ""}
+        </button>
       </div>
 
       {tab === "teachers" && (
@@ -150,6 +163,16 @@ function AdminPanel({ onLogout }) {
           {students?.length === 0 && <p className="muted">No students match your search.</p>}
           {students?.map((s) => (
             <StudentCard key={s.id} student={s} onRefresh={loadStudents} setError={setError} />
+          ))}
+        </>
+      )}
+
+      {tab === "principals" && (
+        <>
+          {!principals && <p className="muted">Loading…</p>}
+          {principals?.length === 0 && <p className="muted">No principals match your search.</p>}
+          {principals?.map((p) => (
+            <PrincipalCard key={p.id} principal={p} onRefresh={loadPrincipals} setError={setError} />
           ))}
         </>
       )}
@@ -319,6 +342,86 @@ function StudentCard({ student: s, onRefresh, setError }) {
           onClick={del}
         >
           🗑 Delete student
+        </button>
+      </div>
+    </Collapsible>
+  );
+}
+
+function PrincipalCard({ principal: p, onRefresh, setError }) {
+  const [form, setForm] = useState({ name: p.name, loginName: p.login_name });
+  const [newPwd, setNewPwd] = useState("");
+  const [status, setStatus] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function saveDetails(e) {
+    e.preventDefault();
+    setSaving(true); setStatus("");
+    try {
+      await adminApi(`/principals/${p.id}`, { method: "PATCH", body: { name: form.name, loginName: form.loginName } });
+      setStatus("✓ Updated.");
+      onRefresh();
+    } catch (err) { setStatus(err.message); } finally { setSaving(false); }
+  }
+
+  async function resetPwd(e) {
+    e.preventDefault();
+    if (!newPwd.trim()) return;
+    setSaving(true); setStatus("");
+    try {
+      await adminApi(`/principals/${p.id}/reset-password`, { method: "POST", body: { newPassword: newPwd } });
+      setStatus("✓ Password reset."); setNewPwd("");
+    } catch (err) { setStatus(err.message); } finally { setSaving(false); }
+  }
+
+  async function del() {
+    if (!confirm(`Delete principal "${p.name}"? This cannot be undone.`)) return;
+    try {
+      await adminApi(`/principals/${p.id}`, { method: "DELETE" });
+      onRefresh();
+    } catch (err) { setError(err.message); }
+  }
+
+  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+
+  return (
+    <Collapsible
+      head={p.name}
+      meta={`${p.login_name} · joined ${new Date(p.created_at).toLocaleDateString()}`}
+    >
+      <form onSubmit={saveDetails}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+          <div className="field" style={{ flex: "1 1 150px", margin: 0 }}>
+            <label>Name</label>
+            <input value={form.name} onChange={set("name")} required />
+          </div>
+          <div className="field" style={{ flex: "1 1 150px", margin: 0 }}>
+            <label>Login Name</label>
+            <input value={form.loginName} onChange={set("loginName")} required />
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <button type="submit" disabled={saving}>Save details</button>
+          {status && <span className={status.startsWith("✓") ? "success-text" : "error-text"} style={{ color: status.startsWith("✓") ? "var(--success)" : "var(--danger)" }}>{status}</span>}
+        </div>
+      </form>
+      <hr style={{ margin: "16px 0", border: "none", borderTop: "1px solid rgba(255,255,255,0.1)" }} />
+      
+      <form onSubmit={resetPwd} style={{ marginTop: 12, display: "flex", gap: 8, alignItems: "flex-end" }}>
+        <div className="field" style={{ margin: 0, flex: 1 }}>
+          <label>New password</label>
+          <input type="text" value={newPwd} onChange={(e) => setNewPwd(e.target.value)} minLength={4} placeholder="Min 4 characters" />
+        </div>
+        <button type="submit" disabled={saving || !newPwd.trim()}>Reset password</button>
+      </form>
+
+      <div style={{ marginTop: 12 }}>
+        <button
+          className="action-btn danger"
+          style={{ fontSize: 13, padding: "6px 14px" }}
+          onClick={del}
+        >
+          🗑 Delete principal
         </button>
       </div>
     </Collapsible>
