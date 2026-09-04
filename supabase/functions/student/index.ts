@@ -47,7 +47,7 @@ Deno.serve(async (req: Request) => {
     if (req.method === "GET" && reviewMatch) return await review(pool, reviewMatch[1], user.id);
 
     const getMatch = path.match(/^\/mcq\/(\d+)$/);
-    if (req.method === "GET" && getMatch) return await getPaper(pool, getMatch[1], user.id);
+    if (req.method === "GET" && getMatch) return await getPaper(pool, getMatch[1], user.id, url.searchParams.get("practice") === "true");
 
     if (req.method === "GET" && path === "/short/active") return await activeShortPapers(pool, user.id);
 
@@ -94,27 +94,28 @@ async function activePapers(pool: ReturnType<typeof getPool>, studentId: number)
   return json({ today: today.rows, archive: archive.rows });
 }
 
-async function getPaper(pool: ReturnType<typeof getPool>, setId: string, studentId: number) {
+async function getPaper(pool: ReturnType<typeof getPool>, setId: string, studentId: number, isPractice: boolean = false) {
   // Same semester guard as activePapers() - a student can't open a paper
   // meant for a different semester even by going straight to the URL.
   const setResult = await pool.query(
     `SELECT ms.id, ms.subject, ms.topic, ms.semester, ms.title, ms.teacher_id
      FROM mcq_sets ms
      JOIN students st ON st.id = $2
-     WHERE ms.id=$1 AND ms.status='live' AND ms.semester = st.semester
-       AND ms.opened_at > now() - interval '${EXAM_HALL_MINUTES} minutes'`,
+     WHERE ms.id=$1 AND ms.status='live' AND ms.semester = st.semester`,
     [setId, studentId]
   );
   if (setResult.rowCount === 0) {
     return json({ error: "This paper is not available right now." }, 404);
   }
 
-  const already = await pool.query("SELECT id FROM attempts WHERE mcq_set_id=$1 AND student_id=$2", [
-    setId,
-    studentId,
-  ]);
-  if ((already.rowCount ?? 0) > 0) {
-    return json({ error: "You've already attempted this paper." }, 409);
+  if (!isPractice) {
+    const already = await pool.query("SELECT id FROM attempts WHERE mcq_set_id=$1 AND student_id=$2", [
+      setId,
+      studentId,
+    ]);
+    if ((already.rowCount ?? 0) > 0) {
+      return json({ error: "You've already attempted this paper." }, 409);
+    }
   }
 
   // correct_option / full match_pairs are withheld here - only the shuffled
@@ -143,18 +144,22 @@ async function submit(req: Request, pool: ReturnType<typeof getPool>, setId: str
   if (!Array.isArray(answers) || answers.length === 0) {
     return json({ error: "No answers received." }, 400);
   }
+  const url = new URL(req.url);
+  const isPractice = url.searchParams.get("practice") === "true";
 
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
 
-    const already = await client.query(
-      "SELECT id FROM attempts WHERE mcq_set_id=$1 AND student_id=$2 FOR UPDATE",
-      [setId, studentId]
-    );
-    if ((already.rowCount ?? 0) > 0) {
-      await client.query("ROLLBACK");
-      return json({ error: "You've already attempted this paper." }, 409);
+    if (!isPractice) {
+      const already = await client.query(
+        "SELECT id FROM attempts WHERE mcq_set_id=$1 AND student_id=$2 FOR UPDATE",
+        [setId, studentId]
+      );
+      if ((already.rowCount ?? 0) > 0) {
+        await client.query("ROLLBACK");
+        return json({ error: "You've already attempted this paper." }, 409);
+      }
     }
 
     const questions = await client.query(
@@ -193,22 +198,24 @@ async function submit(req: Request, pool: ReturnType<typeof getPool>, setId: str
       return { ...a, isCorrect, awardedMarks };
     });
 
-    const attemptResult = await client.query(
-      "INSERT INTO attempts (mcq_set_id, student_id, score, total) VALUES ($1,$2,$3,$4) RETURNING id",
-      [setId, studentId, score, total]
-    );
-    const attemptId = attemptResult.rows[0].id;
-
-    for (const g of graded) {
-      await client.query(
-        `INSERT INTO attempt_answers (attempt_id, question_id, selected_option, match_answer, is_correct, awarded_marks)
-         VALUES ($1,$2,$3,$4,$5,$6)`,
-        [attemptId, g.questionId, g.selected ?? null, g.matchAnswer ? JSON.stringify(g.matchAnswer) : null, g.isCorrect, g.awardedMarks]
+    if (!isPractice) {
+      const attemptResult = await client.query(
+        "INSERT INTO attempts (mcq_set_id, student_id, score, total) VALUES ($1,$2,$3,$4) RETURNING id",
+        [setId, studentId, score, total]
       );
+      const attemptId = attemptResult.rows[0].id;
+
+      for (const g of graded) {
+        await client.query(
+          `INSERT INTO attempt_answers (attempt_id, question_id, selected_option, match_answer, is_correct, awarded_marks)
+           VALUES ($1,$2,$3,$4,$5,$6)`,
+          [attemptId, g.questionId, g.selected ?? null, g.matchAnswer ? JSON.stringify(g.matchAnswer) : null, g.isCorrect, g.awardedMarks]
+        );
+      }
     }
 
     await client.query("COMMIT");
-    return json({ score, total });
+    return json({ score, total, isPractice });
   } catch (err) {
     await client.query("ROLLBACK");
     if ((err as { code?: string }).code === "23505") {

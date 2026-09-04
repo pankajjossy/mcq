@@ -139,7 +139,6 @@ function McqRow({ set: s, onUpload, onDelete, navigate }) {
                 <button className="action-btn secondary" onClick={() => setMode("edit")}>Edit MCQ</button>
               </>
             )}
-            <button className="edit-label-btn" onClick={() => setMode("label")}>✏️ Edit Subject/Topic</button>
             <button className="action-btn danger" onClick={() => onDelete(s.id)}>Delete</button>
           </div>
           {paper && (
@@ -228,9 +227,9 @@ function InlineMcqEditor({ setId, semester, onDone, onCancel }) {
         ))}
       </div>
       <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
-        <button className="action-btn secondary" onClick={addQ}>+ Add Question</button>
-        <button className="action-btn" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save Changes"}</button>
-        <button className="action-btn secondary" onClick={onCancel}>Cancel</button>
+        <button type="button" className="action-btn secondary" onClick={() => addQ()}>+ Add Question</button>
+        <button type="button" className="action-btn" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save Changes"}</button>
+        <button type="button" className="action-btn secondary" onClick={onCancel}>Cancel</button>
       </div>
     </div>
   );

@@ -165,10 +165,13 @@ function ArchiveMcqRow({ t }) {
       done
     >
       {!review ? (
-        <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <button className="secondary" onClick={() => api(`/student/mcq/${t.id}/review`).then(setReview)}>
             Review answers
           </button>
+          <Link className="btn secondary" style={{ textDecoration: "none", color: "inherit" }} to={`/student/test/${t.id}?practice=true`}>
+            Retake (practice)
+          </Link>
           <button className="secondary" onClick={postToWall} disabled={wallPosted || posting}>
             {wallPosted ? "Posted to Wall" : posting ? "Posting..." : "Post to Wall"}
           </button>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api.js";
 
 const LETTERS = ["A", "B", "C", "D"];
@@ -16,16 +16,19 @@ export default function TakeTest() {
   const [wallText, setWallText] = useState("");
   const [wallPosted, setWallPosted] = useState(false);
 
+  const [searchParams] = useSearchParams();
+  const isPractice = searchParams.get("practice") === "true";
+
   useEffect(() => {
     setLoading(true);
-    api(`/student/mcq/${id}`)
+    api(`/student/mcq/${id}${isPractice ? "?practice=true" : ""}`)
       .then((data) => {
         setSet(data.set);
         setQuestions(data.questions);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [id]);
+  }, [id, isPractice]);
 
   function choose(qId, letter) {
     setAnswers({ ...answers, [qId]: letter });
@@ -55,10 +58,10 @@ export default function TakeTest() {
       return { questionId: q.id, selected: answers[q.id] };
     });
     try {
-      const data = await api(`/student/mcq/${id}/submit`, { method: "POST", body: { answers: payload } });
+      const data = await api(`/student/mcq/${id}/submit${isPractice ? "?practice=true" : ""}`, { method: "POST", body: { answers: payload } });
       setResult(data);
-      setWallText(`Just took the ${set?.subject} test - scored ${data.score}/${data.total}!`);
-      setTimeout(() => navigate("/student"), 4000);
+      setWallText(isPractice ? `Just practiced the ${set?.subject} test - scored ${data.score}/${data.total}!` : `Just took the ${set?.subject} test - scored ${data.score}/${data.total}!`);
+      setTimeout(() => navigate("/student"), isPractice ? 6000 : 4000);
     } catch (err) {
       setError(err.message);
     }
@@ -122,8 +125,11 @@ export default function TakeTest() {
 
   return (
     <div className="app-shell">
-      <span className="eyebrow">{set?.subject}</span>
-      <h1>Answer sheet</h1>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10 }}>
+        <span className="eyebrow" style={{ margin: 0 }}>{set?.subject}</span>
+        {isPractice && <span className="avg-badge" style={{ fontSize: 11, padding: "2px 6px", background: "var(--accent)" }}>PRACTICE MODE</span>}
+      </div>
+      <h1 style={{ marginTop: 0 }}>Answer sheet</h1>
       {error && <div className="error-banner">{error}</div>}
 
       {questions.map((q, i) => (
