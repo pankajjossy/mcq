@@ -128,10 +128,10 @@ export default function Login() {
           </div>
         )}
 
-        {/* DEPARTMENT — shown on register for teacher & student */}
-        {mode === "register" && role !== "principal" && (
+        {/* DEPARTMENT — shown on register for teacher, and ALWAYS for student */}
+        {( (mode === "register" && role === "teacher") || role === "student" ) && (
           <div className="field">
-            <label>Department (e.g. CS, IT, Mech)</label>
+            <label>Department (e.g. CS, IT)</label>
             <input value={form.department} onChange={set("department")} required />
           </div>
         )}
@@ -147,12 +147,6 @@ export default function Login() {
         {/* STUDENT fields */}
         {role === "student" && (
           <>
-            {mode === "register" ? null : (
-              <div className="field">
-                <label>Department (e.g. CS, IT)</label>
-                <input value={form.department} onChange={set("department")} required />
-              </div>
-            )}
             <div className="field">
               <label>Semester (e.g. Sem 1)</label>
               <input value={form.semester} onChange={set("semester")} required />
