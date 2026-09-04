@@ -6,12 +6,13 @@ export default function Login() {
   const [role, setRole] = useState("teacher");
   const [mode, setMode] = useState("login"); // login | register
   const [showPrincipal, setShowPrincipal] = useState(false);
+  const [showAdmin, setShowAdmin] = useState(false);
   const [form, setForm] = useState({ name: "", loginName: "", department: "", semester: "", rollno: "", password: "" });
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const navigate = useNavigate();
 
-  // Ctrl+Alt+P reveals the hidden Principal tab
+  // Ctrl+Alt+P reveals the Principal tab; Ctrl+Alt+A reveals the Admin tab
   useEffect(() => {
     function onKey(e) {
       if (e.ctrlKey && e.altKey && e.key === "p") {
@@ -20,6 +21,10 @@ export default function Login() {
         setMode("login");
         setNotice("");
         setError("");
+      }
+      if (e.ctrlKey && e.altKey && e.key === "a") {
+        setShowAdmin(true);
+        navigate("/admin");
       }
     }
     window.addEventListener("keydown", onKey);

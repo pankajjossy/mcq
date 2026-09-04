@@ -1,20 +1,15 @@
 // Edge Function: admin
 // Routes (path after /functions/v1/admin):
-//   POST /login                          - the one admin account logs in
-//   GET  /teachers                       - list every teacher (never a password)
-//   GET  /students                       - list every student (never a password)
-//   POST /teachers/:id/reset-password    - set a new password for a teacher
-//   POST /students/:id/reset-password    - set a new password for a student
-//
-// There is exactly one admin account, defined by two Supabase secrets
-// (ADMIN_USERNAME / ADMIN_PASSWORD) rather than a database row - nothing
-// to register, nothing extra sitting in the database to protect.
-//
-// Passwords are bcrypt-hashed and therefore one-way: nobody, including
-// this function, can recover or display a teacher's or student's actual
-// password - not even by querying the database directly. "Check a
-// password" is implemented here as "set a new one," which is the only
-// thing that's actually possible.
+//   POST /login
+//   GET  /info
+//   GET  /teachers?q=<search>               - search by name (ILIKE)
+//   GET  /students?q=<search>               - search by name (ILIKE)
+//   PATCH /teachers/:id                     - update name, login_name, department
+//   PATCH /students/:id                     - update name, semester, rollno, department
+//   POST  /teachers/:id/reset-password
+//   POST  /students/:id/reset-password
+//   DELETE /teachers/:id
+//   DELETE /students/:id
 
 import bcrypt from "npm:bcryptjs@2.4.3";
 import { query } from "../_shared/db.ts";
@@ -29,32 +24,39 @@ Deno.serve(async (req: Request) => {
   const path = url.pathname.replace(/^\/admin/, "");
 
   try {
-    if (path === "/login" && req.method === "POST") {
-      return await login(req);
-    }
+    if (path === "/login" && req.method === "POST") return await login(req);
 
-    // Public: return admin display name for the home page header.
     if (path === "/info" && req.method === "GET") {
-      const adminName = Deno.env.get("ADMIN_USERNAME") ?? "Admin";
-      return json({ name: adminName });
+      return json({ name: Deno.env.get("ADMIN_USERNAME") ?? "Admin" });
     }
 
-    // Everything else requires an admin token.
     const admin = requireAuth(req, "admin");
     if (!admin) return json({ error: "Not authorized." }, 401);
 
-    if (path === "/teachers" && req.method === "GET") return await listTeachers();
-    if (path === "/students" && req.method === "GET") return await listStudents();
+    // LIST with optional search
+    if (path === "/teachers" && req.method === "GET") return await listTeachers(url);
+    if (path === "/students" && req.method === "GET") return await listStudents(url);
 
+    // PATCH (update fields)
+    const teacherPatch = path.match(/^\/teachers\/(\d+)$/);
+    if (teacherPatch && req.method === "PATCH") return await updateTeacher(req, Number(teacherPatch[1]));
+
+    const studentPatch = path.match(/^\/students\/(\d+)$/);
+    if (studentPatch && req.method === "PATCH") return await updateStudent(req, Number(studentPatch[1]));
+
+    // RESET PASSWORD
     const teacherReset = path.match(/^\/teachers\/(\d+)\/reset-password$/);
-    if (teacherReset && req.method === "POST") {
-      return await resetPassword(req, "teachers", Number(teacherReset[1]));
-    }
+    if (teacherReset && req.method === "POST") return await resetPassword(req, "teachers", Number(teacherReset[1]));
 
     const studentReset = path.match(/^\/students\/(\d+)\/reset-password$/);
-    if (studentReset && req.method === "POST") {
-      return await resetPassword(req, "students", Number(studentReset[1]));
-    }
+    if (studentReset && req.method === "POST") return await resetPassword(req, "students", Number(studentReset[1]));
+
+    // DELETE
+    const teacherDel = path.match(/^\/teachers\/(\d+)$/);
+    if (teacherDel && req.method === "DELETE") return await deleteRecord("teachers", Number(teacherDel[1]));
+
+    const studentDel = path.match(/^\/students\/(\d+)$/);
+    if (studentDel && req.method === "DELETE") return await deleteRecord("students", Number(studentDel[1]));
 
     return json({ error: "Not found." }, 404);
   } catch (err) {
@@ -65,61 +67,91 @@ Deno.serve(async (req: Request) => {
 
 async function login(req: Request) {
   let body: Record<string, unknown>;
-  try {
-    body = await req.json();
-  } catch {
-    return json({ error: "Invalid JSON body." }, 400);
-  }
+  try { body = await req.json(); } catch { return json({ error: "Invalid JSON body." }, 400); }
   const { username, password } = body as { username?: string; password?: string };
-
   const validUsername = Deno.env.get("ADMIN_USERNAME");
   const validPassword = Deno.env.get("ADMIN_PASSWORD");
-  if (!validUsername || !validPassword) {
-    return json({ error: "Admin login isn't configured yet - set ADMIN_USERNAME and ADMIN_PASSWORD." }, 500);
-  }
-  if (username !== validUsername || password !== validPassword) {
-    return json({ error: "Incorrect username or password." }, 401);
-  }
-
+  if (!validUsername || !validPassword) return json({ error: "Admin login isn't configured yet." }, 500);
+  if (username !== validUsername || password !== validPassword) return json({ error: "Incorrect username or password." }, 401);
   const token = signToken({ id: 0, role: "admin", name: "Admin" });
   return json({ token, admin: { name: "Admin" } });
 }
 
-async function listTeachers() {
-  const result = await query(
-    "SELECT id, name, login_name, created_at FROM teachers ORDER BY created_at DESC"
-  );
+async function listTeachers(url: URL) {
+  const q = (url.searchParams.get("q") || "").trim();
+  const result = q
+    ? await query(
+        "SELECT id, name, login_name, department, created_at FROM teachers WHERE name ILIKE $1 ORDER BY name",
+        [`%${q}%`]
+      )
+    : await query("SELECT id, name, login_name, department, created_at FROM teachers ORDER BY name");
   return json({ teachers: result.rows });
 }
 
-async function listStudents() {
-  const result = await query(
-    "SELECT id, name, semester, rollno, created_at FROM students ORDER BY created_at DESC"
-  );
+async function listStudents(url: URL) {
+  const q = (url.searchParams.get("q") || "").trim();
+  const result = q
+    ? await query(
+        "SELECT id, name, semester, rollno, department, created_at FROM students WHERE name ILIKE $1 ORDER BY name",
+        [`%${q}%`]
+      )
+    : await query("SELECT id, name, semester, rollno, department, created_at FROM students ORDER BY name");
   return json({ students: result.rows });
 }
 
-async function resetPassword(req: Request, table: "teachers" | "students", id: number) {
-  let body: Record<string, unknown>;
+async function updateTeacher(req: Request, id: number) {
+  const body = await req.json().catch(() => ({})) as Record<string, unknown>;
+  const { name, loginName, department } = body as { name?: string; loginName?: string; department?: string };
+  const sets: string[] = [];
+  const vals: unknown[] = [];
+  if (name?.trim()) { sets.push(`name=$${sets.length + 1}`); vals.push(name.trim()); }
+  if (loginName?.trim()) { sets.push(`login_name=$${sets.length + 1}`); vals.push(loginName.trim()); }
+  if (department !== undefined) { sets.push(`department=$${sets.length + 1}`); vals.push(department.trim()); }
+  if (sets.length === 0) return json({ error: "Nothing to update." }, 400);
+  vals.push(id);
   try {
-    body = await req.json();
-  } catch {
-    return json({ error: "Invalid JSON body." }, 400);
+    const r = await query(`UPDATE teachers SET ${sets.join(",")} WHERE id=$${vals.length} RETURNING id`, vals);
+    if (r.rowCount === 0) return json({ error: "Teacher not found." }, 404);
+    return json({ ok: true });
+  } catch (e) {
+    if ((e as { code?: string }).code === "23505") return json({ error: "That login name is already taken." }, 409);
+    throw e;
   }
-  const { newPassword } = body as { newPassword?: string };
-  if (!newPassword || newPassword.length < 4) {
-    return json({ error: "New password must be at least 4 characters." }, 400);
-  }
+}
 
-  const hash = await bcrypt.hash(newPassword, 10);
-  // `table` only ever comes from the two matched routes above, never from
-  // request input, so this interpolation isn't a SQL-injection risk.
-  const result = await query(
-    `UPDATE ${table} SET password_hash=$1 WHERE id=$2 RETURNING id`,
-    [hash, id]
-  );
-  if (result.rows.length === 0) {
-    return json({ error: "Not found." }, 404);
+async function updateStudent(req: Request, id: number) {
+  const body = await req.json().catch(() => ({})) as Record<string, unknown>;
+  const { name, semester, rollno, department } = body as { name?: string; semester?: string; rollno?: string; department?: string };
+  const sets: string[] = [];
+  const vals: unknown[] = [];
+  if (name?.trim()) { sets.push(`name=$${sets.length + 1}`); vals.push(name.trim()); }
+  if (semester?.trim()) { sets.push(`semester=$${sets.length + 1}`); vals.push(semester.trim()); }
+  if (rollno?.trim()) { sets.push(`rollno=$${sets.length + 1}`); vals.push(rollno.trim()); }
+  if (department !== undefined) { sets.push(`department=$${sets.length + 1}`); vals.push(department.trim()); }
+  if (sets.length === 0) return json({ error: "Nothing to update." }, 400);
+  vals.push(id);
+  try {
+    const r = await query(`UPDATE students SET ${sets.join(",")} WHERE id=$${vals.length} RETURNING id`, vals);
+    if (r.rowCount === 0) return json({ error: "Student not found." }, 404);
+    return json({ ok: true });
+  } catch (e) {
+    if ((e as { code?: string }).code === "23505") return json({ error: "That roll number already exists for this semester." }, 409);
+    throw e;
   }
-  return json({ status: "ok" });
+}
+
+async function resetPassword(req: Request, table: "teachers" | "students", id: number) {
+  const body = await req.json().catch(() => ({})) as Record<string, unknown>;
+  const { newPassword } = body as { newPassword?: string };
+  if (!newPassword || newPassword.length < 4) return json({ error: "Password must be at least 4 characters." }, 400);
+  const hash = await bcrypt.hash(newPassword, 10);
+  const r = await query(`UPDATE ${table} SET password_hash=$1 WHERE id=$2 RETURNING id`, [hash, id]);
+  if (r.rowCount === 0) return json({ error: "Not found." }, 404);
+  return json({ ok: true });
+}
+
+async function deleteRecord(table: "teachers" | "students", id: number) {
+  const r = await query(`DELETE FROM ${table} WHERE id=$1 RETURNING id`, [id]);
+  if (r.rowCount === 0) return json({ error: "Not found." }, 404);
+  return json({ ok: true });
 }
