@@ -49,7 +49,7 @@ export default function Login() {
       } else if (role === "student") {
         path = mode === "login" ? "/auth/student/login" : "/auth/student/register";
         body = mode === "login"
-          ? { semester: form.semester, rollno: form.rollno, password: form.password }
+          ? { semester: form.semester, rollno: form.rollno, department: form.department, password: form.password }
           : { name: form.name, department: form.department, semester: form.semester, rollno: form.rollno, password: form.password };
 
       } else {
@@ -147,6 +147,12 @@ export default function Login() {
         {/* STUDENT fields */}
         {role === "student" && (
           <>
+            {mode === "register" ? null : (
+              <div className="field">
+                <label>Department (e.g. CS, IT)</label>
+                <input value={form.department} onChange={set("department")} required />
+              </div>
+            )}
             <div className="field">
               <label>Semester (e.g. Sem 1)</label>
               <input value={form.semester} onChange={set("semester")} required />

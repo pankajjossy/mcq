@@ -94,18 +94,26 @@ async function studentRegister(body: Record<string, unknown>) {
     return json({ token, student });
   } catch (err) {
     if ((err as { code?: string }).code === "23505") {
-      return json({ error: "That roll number is already registered for this semester." }, 409);
+      return json({ error: "That roll number is already registered for this semester and department." }, 409);
     }
     throw err;
   }
 }
 
 async function studentLogin(body: Record<string, unknown>) {
-  const { semester, rollno, password } = body as { semester?: string; rollno?: string; password?: string };
-  const result = await query("SELECT * FROM students WHERE semester=$1 AND rollno=$2", [semester, rollno]);
+  const { semester, rollno, department, password } = body as {
+    semester?: string; rollno?: string; department?: string; password?: string;
+  };
+  if (!semester || !rollno || !department) {
+    return json({ error: "Semester, department and roll number are required to log in." }, 400);
+  }
+  const result = await query(
+    "SELECT * FROM students WHERE semester=$1 AND rollno=$2 AND department=$3",
+    [semester, rollno, department]
+  );
   const student = result.rows[0];
   if (!student || !password || !(await bcrypt.compare(password, student.password_hash))) {
-    return json({ error: "Incorrect semester, roll number or password." }, 401);
+    return json({ error: "Incorrect semester, department, roll number or password." }, 401);
   }
   const token = signToken({ id: student.id, role: "student", name: student.name, semester: student.semester });
   return json({

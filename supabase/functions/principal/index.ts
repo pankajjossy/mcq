@@ -5,7 +5,7 @@
 //   GET /teachers?dept=X          -> teacher list with their MCQ publish activity per day
 //   GET /students?dept=X&sem=Y    -> student performance in that dept/semester
 
-import { getPool } from "../_shared/db.ts";
+import { query } from "../_shared/db.ts";
 import { requireAuth } from "../_shared/jwt.ts";
 import { corsHeaders, handlePreflight, json } from "../_shared/cors.ts";
 
@@ -18,12 +18,10 @@ Deno.serve(async (req: Request) => {
 
   const url = new URL(req.url);
   const path = url.pathname.replace(/^\/principal/, "");
-  const pool = getPool();
-
   try {
-    if (req.method === "GET" && path === "/departments") return await getDepartments(pool);
-    if (req.method === "GET" && path === "/teachers") return await getTeachers(pool, url);
-    if (req.method === "GET" && path === "/students") return await getStudents(pool, url);
+    if (req.method === "GET" && path === "/departments") return await getDepartments();
+    if (req.method === "GET" && path === "/teachers") return await getTeachers(url);
+    if (req.method === "GET" && path === "/students") return await getStudents(url);
     return json({ error: "Not found." }, 404);
   } catch (err) {
     console.error(err);
@@ -31,19 +29,19 @@ Deno.serve(async (req: Request) => {
   }
 });
 
-async function getDepartments(pool: ReturnType<typeof getPool>) {
-  const r = await pool.query(
+async function getDepartments() {
+  const r = await query(
     "SELECT DISTINCT department FROM teachers WHERE department != '' ORDER BY department"
   );
   return json({ departments: r.rows.map((x: { department: string }) => x.department) });
 }
 
-async function getTeachers(pool: ReturnType<typeof getPool>, url: URL) {
+async function getTeachers(url: URL) {
   const dept = url.searchParams.get("dept");
   if (!dept) return json({ error: "dept required." }, 400);
 
   // For each teacher: their name, and all MCQ sets grouped by date with time
-  const teachers = await pool.query(
+  const teachers = await query(
     `SELECT id, name FROM teachers WHERE department = $1 ORDER BY name`,
     [dept]
   );
@@ -51,7 +49,7 @@ async function getTeachers(pool: ReturnType<typeof getPool>, url: URL) {
   const result = [];
   for (const t of teachers.rows) {
     // Each MCQ set published: subject (topic), opened_at
-    const papers = await pool.query(
+    const papers = await query(
       `SELECT subject, topic, semester, opened_at::date AS date, 
               TO_CHAR(opened_at, 'HH12:MI AM') AS time_str
        FROM mcq_sets
@@ -68,13 +66,13 @@ async function getTeachers(pool: ReturnType<typeof getPool>, url: URL) {
   return json({ teachers: result });
 }
 
-async function getStudents(pool: ReturnType<typeof getPool>, url: URL) {
+async function getStudents(url: URL) {
   const dept = url.searchParams.get("dept");
   const sem = url.searchParams.get("sem");
   if (!dept || !sem) return json({ error: "dept and sem required." }, 400);
 
   // All students in this dept+semester
-  const students = await pool.query(
+  const students = await query(
     `SELECT id, name, rollno FROM students WHERE department = $1 AND semester = $2 ORDER BY rollno`,
     [dept, sem]
   );
@@ -82,13 +80,13 @@ async function getStudents(pool: ReturnType<typeof getPool>, url: URL) {
   const result = [];
   for (const s of students.rows) {
     // Attendance: how many MCQ sets were offered to this semester vs how many they appeared
-    const offered = await pool.query(
+    const offered = await query(
       `SELECT COUNT(*) AS cnt FROM mcq_sets ms
        JOIN teachers t ON t.id = ms.teacher_id
        WHERE t.department = $1 AND ms.semester = $2 AND ms.status = 'closed'`,
       [dept, sem]
     );
-    const appeared = await pool.query(
+    const appeared = await query(
       `SELECT COUNT(*) AS cnt FROM attempts a
        JOIN mcq_sets ms ON ms.id = a.mcq_set_id
        WHERE a.student_id = $1`,
@@ -99,7 +97,7 @@ async function getStudents(pool: ReturnType<typeof getPool>, url: URL) {
     const attendance = totalOffered > 0 ? Math.round((100 * totalAppeared) / totalOffered) : 0;
 
     // Subject-wise performance with teacher name
-    const subjectPerf = await pool.query(
+    const subjectPerf = await query(
       `SELECT ms.subject,
               ROUND(100.0 * SUM(a.score) / NULLIF(SUM(a.total), 0), 1) AS avg_percent,
               SUM(a.score) AS total_score,
