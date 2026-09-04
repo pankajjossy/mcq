@@ -275,10 +275,12 @@ export default function TeacherBuildMcq() {
                 <button onClick={generate} disabled={busy || (!pastedText && !file)}>
                   {busy ? "Generating..." : "Generate with Gemini"}
                 </button>
-                <p className="muted" style={{ marginTop: 10 }}>
-                  Generating with the button above is only for the multiple-choice-family types. Short-answer/essay
-                  questions have their own choice of who writes them, further down.
-                </p>
+                <div style={{ marginTop: 14 }}>
+                  <span className="muted" style={{ marginRight: 10 }}>or</span>
+                  <button className="secondary" onClick={() => setDraftQuestions([{ type: "mcq", question: "", marks: 1, difficulty: "medium", options: { A:"", B:"", C:"", D:"" }, correct: "A" }])}>
+                    + Add manual question
+                  </button>
+                </div>
               </>
             ) : (
               <>

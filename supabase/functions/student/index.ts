@@ -84,7 +84,7 @@ async function activePapers(pool: ReturnType<typeof getPool>, studentId: number)
   );
 
   const archive = await pool.query(
-    `SELECT ms.id, ms.subject, ms.topic, ms.semester, ms.title, a.score, a.total, a.submitted_at
+    `SELECT ms.id, ms.subject, ms.topic, ms.semester, ms.title, ms.teacher_id, a.score, a.total, a.submitted_at
      FROM attempts a JOIN mcq_sets ms ON ms.id = a.mcq_set_id
      WHERE a.student_id = $1
      ORDER BY a.submitted_at DESC`,

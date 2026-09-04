@@ -142,6 +142,21 @@ export default function StudentDashboard() {
 
 function ArchiveMcqRow({ t }) {
   const [review, setReview] = useState(null);
+  const [wallPosted, setWallPosted] = useState(false);
+  const [posting, setPosting] = useState(false);
+
+  async function postToWall() {
+    if (!t.teacher_id) return;
+    setPosting(true);
+    try {
+      await api(`/wall/${t.teacher_id}/posts`, { method: "POST", body: { body: "Can we discuss this test?", mcqSetId: t.id } });
+      setWallPosted(true);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setPosting(false);
+    }
+  }
 
   return (
     <Collapsible
@@ -150,9 +165,14 @@ function ArchiveMcqRow({ t }) {
       done
     >
       {!review ? (
-        <button className="secondary" onClick={() => api(`/student/mcq/${t.id}/review`).then(setReview)}>
-          Review answers
-        </button>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button className="secondary" onClick={() => api(`/student/mcq/${t.id}/review`).then(setReview)}>
+            Review answers
+          </button>
+          <button className="secondary" onClick={postToWall} disabled={wallPosted || posting}>
+            {wallPosted ? "Posted to Wall" : posting ? "Posting..." : "Post to Wall"}
+          </button>
+        </div>
       ) : (
         <PaperReview questions={review.questions} />
       )}
