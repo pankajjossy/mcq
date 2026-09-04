@@ -213,28 +213,22 @@ async function getMcqSet(id: string, teacherId: number) {
   return json({ set: setResult.rows[0], questions: questions.rows });
 }
 
-// Editing is only allowed before the paper goes live.
+// Editing allowed regardless of status so teachers can fix questions/answers post-upload.
 async function updateMcqSet(req: Request, id: string, teacherId: number) {
   const body = await req.json().catch(() => ({}));
-  const { subject, topic, semester, questions } = body as {
-    subject?: string;
-    topic?: string;
-    semester?: string;
-    questions?: unknown;
-  };
-  if (!subject || !topic || !semester || !validateQuestions(questions)) {
+  const raw = body as { subject?: string; topic?: string; semester?: string; questions?: unknown };
+  const subject = initcap((raw.subject || "").toString().trim());
+  const topic   = initcap((raw.topic   || "").toString().trim());
+  const semester = (raw.semester || "").toString().trim();
+  if (!subject || !topic || !semester || !validateQuestions(raw.questions)) {
     return json({ error: "Subject, topic, semester and at least one valid question are required." }, 400);
   }
-
-  const setCheck = await query("SELECT status FROM mcq_sets WHERE id=$1 AND teacher_id=$2", [id, teacherId]);
+  const setCheck = await query("SELECT teacher_id FROM mcq_sets WHERE id=$1 AND teacher_id=$2", [id, teacherId]);
   if (setCheck.rowCount === 0) return json({ error: "MCQ set not found." }, 404);
-  if (setCheck.rows[0].status !== "ready") {
-    return json({ error: "This paper has already been uploaded and can no longer be edited." }, 409);
-  }
 
   await query("UPDATE mcq_sets SET subject=$1, topic=$2, semester=$3, title=$1 WHERE id=$4", [subject, topic, semester, id]);
   await query("DELETE FROM mcq_questions WHERE mcq_set_id=$1", [id]);
-  await insertQuestions(Number(id), questions as DraftQuestionIn[]);
+  await insertQuestions(Number(id), raw.questions as DraftQuestionIn[]);
   return json({ ok: true });
 }
 

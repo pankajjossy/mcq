@@ -99,75 +99,48 @@ export default function TeacherDashboard() {
 // ─── MCQ paper row ────────────────────────────────────────────────────────────
 function McqRow({ set: s, onUpload, onDelete, navigate }) {
   const [paper, setPaper] = useState(null);
-  const [editingLabel, setEditingLabel] = useState(false);
+  const [mode, setMode] = useState("view"); // "view" | "label" | "edit"
 
-  async function upload() {
-    await api(`/teacher/mcq/${s.id}/upload`, { method: "POST" });
-    onUpload();
-  }
-  async function closeAndShow() {
-    await api(`/teacher/mcq/${s.id}/close`, { method: "POST" });
-    navigate(`/teacher/live/${s.id}`);
-  }
-  // Re-upload: same paper, new opened_at = now() in DB, fresh live window.
-  async function reupload() {
-    await api(`/teacher/mcq/${s.id}/upload`, { method: "POST" });
-    onUpload();
-  }
-  async function view() {
-    if (paper) return setPaper(null);
-    const data = await api(`/teacher/mcq/${s.id}`);
-    setPaper(data);
-  }
+  async function upload() { await api(`/teacher/mcq/${s.id}/upload`, { method: "POST" }); onUpload(); }
+  async function closeAndShow() { await api(`/teacher/mcq/${s.id}/close`, { method: "POST" }); navigate(`/teacher/live/${s.id}`); }
+  async function reupload() { await api(`/teacher/mcq/${s.id}/upload`, { method: "POST" }); onUpload(); }
+  async function togglePaper() { if (paper) return setPaper(null); const d = await api(`/teacher/mcq/${s.id}`); setPaper(d); }
 
   return (
-    // forceOpen={editingLabel} auto-expands the card when teacher clicks
-    // "Edit Subject/Topic" so the correction form is immediately visible.
     <Collapsible
       head={paperLabel(s.subject, s.topic)}
       meta={`Sem ${s.semester} · ${formatShort(s.opened_at || s.created_at)} · status: ${s.status} · ${s.total_marks} marks`}
       done={s.status === "closed"}
-      forceOpen={editingLabel}
+      forceOpen={mode !== "view"}
     >
-      {editingLabel ? (
-        <LabelEditor
-          set={s}
-          table="mcq"
-          onDone={() => { setEditingLabel(false); onUpload(); }}
-          onCancel={() => setEditingLabel(false)}
-        />
-      ) : (
+      {mode === "label" && <LabelEditor set={s} table="mcq" onDone={() => { setMode("view"); onUpload(); }} onCancel={() => setMode("view")} />}
+      {mode === "edit" && <InlineMcqEditor setId={s.id} semester={s.semester} onDone={() => { setMode("view"); onUpload(); }} onCancel={() => setMode("view")} />}
+      {mode === "view" && (
         <>
           <div className="actions">
-            {/* ── ready ── */}
             {s.status === "ready" && (
               <>
                 <button className="action-btn" onClick={upload}>Upload</button>
-                <button className="action-btn secondary" onClick={view}>{paper ? "Hide MCQ" : "View MCQ"}</button>
-                <button className="action-btn secondary" onClick={() => navigate(`/teacher/build/${s.id}`)}>Edit MCQ</button>
+                <button className="action-btn secondary" onClick={togglePaper}>{paper ? "Hide MCQ" : "View MCQ"}</button>
+                <button className="action-btn secondary" onClick={() => setMode("edit")}>Edit MCQ</button>
               </>
             )}
-            {/* ── live ── */}
             {s.status === "live" && (
               <>
                 <button className="action-btn" onClick={closeAndShow}>Show Results</button>
-                <button className="action-btn secondary" onClick={view}>{paper ? "Hide MCQ" : "View MCQ"}</button>
+                <button className="action-btn secondary" onClick={togglePaper}>{paper ? "Hide MCQ" : "View MCQ"}</button>
               </>
             )}
-            {/* ── closed: Re-upload (new date), View Results, View MCQ, Edit MCQ ── */}
             {s.status === "closed" && (
               <>
                 <button className="action-btn" onClick={reupload}>Re-upload</button>
                 <Link className="action-btn btn secondary" to={`/teacher/live/${s.id}`}>View Results</Link>
-                <button className="action-btn secondary" onClick={view}>{paper ? "Hide MCQ" : "View MCQ"}</button>
-                <button className="action-btn secondary" onClick={() => navigate(`/teacher/build/${s.id}`)}>Edit MCQ</button>
+                <button className="action-btn secondary" onClick={togglePaper}>{paper ? "Hide MCQ" : "View MCQ"}</button>
+                <button className="action-btn secondary" onClick={() => setMode("edit")}>Edit MCQ</button>
               </>
             )}
-            {/* Always available — clicking this expands the card and shows the
-                correction form. Permanently updates subject/topic in the DB,
-                so scores re-group under the corrected subject name instantly. */}
-            <button className="edit-label-btn" onClick={() => setEditingLabel(true)}>✏️ Edit Subject/Topic</button>
-            <button className="danger action-btn" onClick={() => onDelete(s.id)}>Delete</button>
+            <button className="edit-label-btn" onClick={() => setMode("label")}>✏️ Edit Subject/Topic</button>
+            <button className="action-btn danger" onClick={() => onDelete(s.id)}>Delete</button>
           </div>
           {paper && (
             <div className="paper-review-area">
@@ -177,6 +150,89 @@ function McqRow({ set: s, onUpload, onDelete, navigate }) {
         </>
       )}
     </Collapsible>
+  );
+}
+
+// ─── Inline full MCQ editor (no page navigation) ──────────────────────────────
+function InlineMcqEditor({ setId, semester, onDone, onCancel }) {
+  const [subj, setSubj] = useState(""); const [top, setTop] = useState(""); const [sem, setSem] = useState(semester || "");
+  const [qs, setQs] = useState(null); const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState(""); const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    api(`/teacher/mcq/${setId}`).then(d => {
+      setSubj(d.set.subject); setTop(d.set.topic || ""); setSem(d.set.semester || semester || "");
+      setQs(d.questions.map(q => ({
+        type: q.question_type, question: q.question_text, marks: q.marks, difficulty: q.difficulty || "medium",
+        options: ["mcq","true_false"].includes(q.question_type)
+          ? { A: q.option_a||"", B: q.option_b||"", C: q.option_c||"", D: q.option_d||"" } : undefined,
+        correct: q.question_type !== "match" ? (q.correct_option || "") : undefined,
+        pairs: q.question_type === "match"
+          ? (typeof q.match_pairs === "string" ? JSON.parse(q.match_pairs||"[]") : (q.match_pairs||[])) : undefined,
+      }))); setLoading(false);
+    }).catch(e => { setErr(e.message); setLoading(false); });
+  }, [setId]);
+  const upd = (i, p) => { const c = [...qs]; c[i] = { ...c[i], ...p }; setQs(c); };
+  const updOpt = (i, l, v) => { const c = [...qs]; c[i] = { ...c[i], options: { ...c[i].options, [l]: v } }; setQs(c); };
+  const rmQ = (i) => setQs(qs.filter((_, x) => x !== i));
+  const addQ = () => setQs([...qs, { type: "mcq", question: "", marks: 1, difficulty: "medium", options: { A:"", B:"", C:"", D:"" }, correct: "A" }]);
+  async function save() {
+    if (!subj.trim() || !top.trim()) return setErr("Subject and topic required.");
+    if (!qs || !qs.length) return setErr("At least one question required.");
+    setErr(""); setBusy(true);
+    try {
+      await api(`/teacher/mcq/${setId}`, { method: "PUT", body: {
+        subject: subj.trim().replace(/\b\w/g, c => c.toUpperCase()),
+        topic: top.trim().replace(/\b\w/g, c => c.toUpperCase()),
+        semester: sem, questions: qs,
+      }});
+      onDone();
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  }
+  if (loading) return <p className="muted" style={{ padding: "12px 0" }}>Loading questions…</p>;
+  const iStyle = { background: "#fff8ee", color: "var(--paper-ink)", border: "1px solid rgba(43,36,26,0.3)", borderRadius: "var(--radius)", padding: "6px 8px", fontFamily: "var(--sans)", fontSize: 15, width: "100%" };
+  return (
+    <div className="inline-editor-area">
+      <div className="label-editor-title">✏️ Edit Paper — Questions, Options & Answers</div>
+      <div style={{ fontSize: "0.78em", opacity: 0.55, marginBottom: 10 }}>Edit questions/options. Radio button = correct answer. Add or remove questions below.</div>
+      {err && <div className="error-banner">{err}</div>}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+        <div className="field" style={{ flex: "1 1 140px" }}><label>Subject</label><input value={subj} onChange={e => setSubj(e.target.value)} /></div>
+        <div className="field" style={{ flex: "1 1 140px" }}><label>Topic</label><input value={top} onChange={e => setTop(e.target.value)} /></div>
+      </div>
+      <div className="questions-scroll">
+        {(qs || []).map((q, i) => (
+          <div key={i} className="question-block">
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, flexWrap: "wrap", gap: 6 }}>
+              <span style={{ fontSize: 11, opacity: 0.65, textTransform: "uppercase", letterSpacing: "0.1em" }}>Q{i + 1} · {q.type.replace(/_/g, " ")}</span>
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <label style={{ margin: 0, fontSize: 12, color: "var(--paper-ink)" }}>Marks</label>
+                <input type="number" min="0.5" step="0.5" className="marks-input" value={q.marks} onChange={e => upd(i, { marks: Number(e.target.value) })} style={{ background: "#fff8ee", color: "var(--paper-ink)" }} />
+                <button style={{ background: "var(--danger)", color: "#fff", border: "none", borderRadius: "3px", padding: "4px 10px", cursor: "pointer" }} onClick={() => rmQ(i)}>✕</button>
+              </div>
+            </div>
+            <textarea rows="2" value={q.question} onChange={e => upd(i, { question: e.target.value })} style={{ ...iStyle, marginBottom: 8, fontWeight: 600 }} />
+            {q.type === "mcq" && ["A","B","C","D"].map(l => (
+              <div className="option-row" key={l}>
+                <input type="radio" name={`corr-${setId}-${i}`} checked={q.correct === l} onChange={() => upd(i, { correct: l })} />
+                <input value={q.options?.[l] || ""} onChange={e => updOpt(i, l, e.target.value)} placeholder={`Option ${l}`} style={iStyle} />
+              </div>
+            ))}
+            {q.type === "true_false" && ["A","B"].map(l => (
+              <div className="option-row" key={l}>
+                <input type="radio" name={`corr-${setId}-${i}`} checked={q.correct === l} onChange={() => upd(i, { correct: l })} />
+                <label style={{ color: "var(--paper-ink)", margin: 0 }}>{l === "A" ? "True" : "False"}</label>
+              </div>
+            ))}
+            {q.type === "fill_blank" && <div className="field"><label>Correct answer</label><input value={q.correct || ""} onChange={e => upd(i, { correct: e.target.value })} style={iStyle} /></div>}
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+        <button className="action-btn secondary" onClick={addQ}>+ Add Question</button>
+        <button className="action-btn" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save Changes"}</button>
+        <button className="action-btn secondary" onClick={onCancel}>Cancel</button>
+      </div>
+    </div>
   );
 }
 
@@ -303,64 +359,13 @@ function LabelEditor({ set: s, table, onDone, onCancel }) {
         <button onClick={save} disabled={busy || !subject.trim() || !topic.trim()}>
           {busy ? "Saving…" : "Save Correction"}
         </button>
-        <button className="secondary" onClick={onCancel}>Cancel</button>
+        <button className="action-btn secondary" onClick={onCancel}>Cancel</button>
       </div>
     </div>
   );
 }
 
-// ─── Aggregate helper ─────────────────────────────────────────────────────────
-// Given the raw /teacher/scores/detailed feed, build one row per student with
-// a breakdown column per key (topic when scoped to a subject; subject overall).
-//
-// ABSENT = ZERO rule: every paper that exists in scope is counted in the
-// denominator for every student, even if that student didn't sit it.
-// So a student who was absent for one of three tests still gets divided by
-// the total marks of all three, not just the two they took. This prevents
-// an inflated average for students who skipped hard tests.
-function aggregate(attempts, { subjectFilter, keyField }) {
-  const scoped = subjectFilter ? attempts.filter((a) => a.subject === subjectFilter) : attempts;
-
-  // Maximum marks available per breakdown column.  We take the highest value
-  // seen across all attempts for that column, so if the same topic was tested
-  // twice (re-upload) the bigger pool is used.  Each student's denominator is
-  // the sum of ALL column totals regardless of whether they attempted them.
-  const keyTotals = new Map();
-  for (const a of scoped) {
-    const bKey = a[keyField] || "—";
-    const t = Number(a.total);
-    if (!keyTotals.has(bKey) || t > keyTotals.get(bKey)) keyTotals.set(bKey, t);
-  }
-
-  const byStudent = new Map();
-  for (const a of scoped) {
-    const key = a.rollno;
-    if (!byStudent.has(key)) byStudent.set(key, { rollno: a.rollno, name: a.name, breakdown: {} });
-    const row = byStudent.get(key);
-    const bKey = a[keyField] || "—";
-    if (!row.breakdown[bKey]) row.breakdown[bKey] = { score: 0, total: 0 };
-    row.breakdown[bKey].score += Number(a.score);
-    row.breakdown[bKey].total += Number(a.total);
-  }
-
-  const rows = Array.from(byStudent.values()).map((r) => {
-    let score = 0;
-    let total = 0;
-    for (const [bKey, maxTotal] of keyTotals) {
-      // Student's score for this column (0 if absent/not attempted).
-      score += r.breakdown[bKey] ? r.breakdown[bKey].score : 0;
-      // Always add the full marks for this column to the denominator.
-      total += maxTotal;
-    }
-    return { ...r, score, total, avg: total ? Math.round((100 * score) / total) : 0 };
-  });
-
-  // Best performer on top.
-  rows.sort((x, y) => y.avg - x.avg || y.score - x.score);
-  return rows;
-}
-
-// Breakdown columns ordered by most-recently-run paper first.
+// ─── Performance helpers ──────────────────────────────────────────────────────
 function latestFirst(attempts, subjectFilter, keyField) {
   const latest = new Map();
   for (const a of attempts) {
@@ -372,137 +377,129 @@ function latestFirst(attempts, subjectFilter, keyField) {
   return [...latest.keys()].sort((x, y) => latest.get(y) - latest.get(x));
 }
 
+// Subject tab: per-student score%, attendance%, topic breakdown.
+function subjectRows(attempts, subjectFilter) {
+  const sc = attempts.filter(a => a.subject === subjectFilter);
+  const totalTests = new Set(sc.map(a => a.mcq_set_id)).size;
+  const topicMax = new Map();
+  for (const a of sc) { const t = Number(a.total); if (!topicMax.has(a.topic) || t > topicMax.get(a.topic)) topicMax.set(a.topic, t); }
+  const byS = new Map();
+  for (const a of sc) {
+    if (!byS.has(a.rollno)) byS.set(a.rollno, { rollno: a.rollno, name: a.name, breakdown: {}, seen: new Set() });
+    const r = byS.get(a.rollno); r.seen.add(a.mcq_set_id);
+    if (!r.breakdown[a.topic]) r.breakdown[a.topic] = { score: 0, total: 0 };
+    r.breakdown[a.topic].score += Number(a.score); r.breakdown[a.topic].total += Number(a.total);
+  }
+  return Array.from(byS.values()).map(r => {
+    let score = 0, total = 0;
+    for (const [k, m] of topicMax) { score += r.breakdown[k] ? r.breakdown[k].score : 0; total += m; }
+    return { ...r, avg: total ? Math.round(100 * score / total) : 0, att: totalTests ? Math.round(100 * r.seen.size / totalTests) : 0 };
+  }).sort((a, b) => b.avg - a.avg || b.att - a.att);
+}
+
+// Overall tab: avg of per-subject-percentages (Python 60% + SE 70% = 65%) + avg attendance.
+function overallRows(attempts) {
+  const subjects = [...new Set(attempts.map(a => a.subject))];
+  const sData = {};
+  for (const subj of subjects) {
+    const sc = attempts.filter(a => a.subject === subj);
+    const totalTests = new Set(sc.map(a => a.mcq_set_id)).size;
+    const topicMax = new Map();
+    for (const a of sc) { const t = Number(a.total); if (!topicMax.has(a.topic) || t > topicMax.get(a.topic)) topicMax.set(a.topic, t); }
+    const totalMarks = [...topicMax.values()].reduce((s, v) => s + v, 0);
+    const sts = new Map();
+    for (const a of sc) {
+      if (!sts.has(a.rollno)) sts.set(a.rollno, { rollno: a.rollno, name: a.name, score: 0, seen: new Set() });
+      const r = sts.get(a.rollno); r.score += Number(a.score); r.seen.add(a.mcq_set_id);
+    }
+    sData[subj] = { totalTests, totalMarks, students: sts };
+  }
+  const allSt = new Map();
+  for (const subj of subjects) {
+    for (const [rn, sd] of sData[subj].students) {
+      if (!allSt.has(rn)) allSt.set(rn, { rollno: sd.rollno, name: sd.name, breakdown: {} });
+      const { totalTests, totalMarks } = sData[subj];
+      allSt.get(rn).breakdown[subj] = {
+        pct: totalMarks ? Math.round(100 * sd.score / totalMarks) : 0,
+        att: totalTests ? Math.round(100 * sd.seen.size / totalTests) : 0,
+      };
+    }
+  }
+  return Array.from(allSt.values()).map(r => {
+    const pcts = subjects.map(s => r.breakdown[s] ? r.breakdown[s].pct : 0);
+    const atts = subjects.map(s => r.breakdown[s] ? r.breakdown[s].att : 0);
+    return { ...r, avgPct: Math.round(pcts.reduce((a, b) => a + b, 0) / subjects.length), avgAtt: Math.round(atts.reduce((a, b) => a + b, 0) / subjects.length) };
+  }).sort((a, b) => b.avgPct - a.avgPct);
+}
+
+function attCls(p) { return p >= 75 ? "att-good" : p >= 50 ? "att-warn" : "att-low"; }
+
 // ─── Subject Performance tab ──────────────────────────────────────────────────
 function SubjectPerformance() {
   const [attempts, setAttempts] = useState([]);
   const [error, setError] = useState("");
   const [subject, setSubject] = useState(null);
-  const [renamingSubject, setRenamingSubject] = useState(null); // subject name being renamed
+  const [renamingSubject, setRenamingSubject] = useState(null);
   const [renameVal, setRenameVal] = useState("");
   const [renameBusy, setRenameBusy] = useState(false);
   const [renameError, setRenameError] = useState("");
 
-  function load() {
-    api("/teacher/scores/detailed")
-      .then((d) => setAttempts(d.attempts))
-      .catch((err) => setError(err.message));
-  }
-
+  function load() { api("/teacher/scores/detailed").then(d => setAttempts(d.attempts)).catch(e => setError(e.message)); }
   useEffect(() => { load(); }, []);
 
-  // Title Case the new name to match what backend stores
-  function toTCase(str) { return str.replace(/\b\w/g, (c) => c.toUpperCase()); }
-
   async function saveRename() {
-    if (!renameVal.trim()) {
-      setRenamingSubject(null);
-      return;
-    }
-    const newName = toTCase(renameVal.trim());
-    setRenameBusy(true);
-    setRenameError("");
+    if (!renameVal.trim()) { setRenamingSubject(null); return; }
+    const newName = renameVal.trim().replace(/\b\w/g, c => c.toUpperCase());
+    setRenameBusy(true); setRenameError("");
     try {
-      await api("/teacher/rename-subject", {
-        method: "PATCH",
-        body: { oldSubject: renamingSubject, newSubject: newName },
-      });
-      // Switch active tab to renamed subject (title-cased, matching DB)
-      setSubject(newName);
-      setRenamingSubject(null);
-      load();
-    } catch (err) {
-      setRenameError(err.message);
-    } finally {
-      setRenameBusy(false);
-    }
+      await api("/teacher/rename-subject", { method: "PATCH", body: { oldSubject: renamingSubject, newSubject: newName } });
+      setSubject(newName); setRenamingSubject(null); load();
+    } catch (e) { setRenameError(e.message); } finally { setRenameBusy(false); }
   }
 
   if (error) return <div className="error-banner">{error}</div>;
-  if (attempts.length === 0) return <p className="muted">No attempts recorded yet.</p>;
+  if (!attempts.length) return <p className="muted">No attempts recorded yet.</p>;
 
-  // Normalize all case-variants of subject names to their Title-Cased form
-  // so "python", "Python", "PYTHON" all merge under a single tab.
-  function normSubject(s) { return s.replace(/\b\w/g, (c) => c.toUpperCase()); }
-  // Patch attempts in-place so aggregate + latestFirst see canonical names
-  const normalizedAttempts = attempts.map((a) => ({ ...a, subject: normSubject(a.subject || "") }));
-
-  const subjects = [...new Set(normalizedAttempts.map((a) => a.subject))].sort();
+  const norm = attempts.map(a => ({ ...a, subject: a.subject.replace(/\b\w/g, c => c.toUpperCase()) }));
+  const subjects = [...new Set(norm.map(a => a.subject))].sort();
   const activeSubject = subject || subjects[0];
-  const rows = aggregate(normalizedAttempts, { subjectFilter: activeSubject, keyField: "topic" });
-  const topics = latestFirst(normalizedAttempts, activeSubject, "topic");
+  const rows = subjectRows(norm, activeSubject);
+  const topics = latestFirst(norm, activeSubject, "topic");
 
   return (
     <>
       <div className="subject-picker">
-        {subjects.map((subj) => (
+        {subjects.map(subj => (
           <span key={subj} style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
-            <button
-              className={activeSubject === subj ? "active" : ""}
-              onClick={() => setSubject(subj)}
-            >
-              {subj}
-            </button>
-            <button
-              title={`Rename "${subj}"`}
-              className="icon-edit-btn"
-              onClick={(e) => {
-                e.stopPropagation();
-                setRenamingSubject(subj);
-                setRenameVal(subj);
-                setRenameError("");
-              }}
-            >
-              ✏️
-            </button>
+            <button className={activeSubject === subj ? "active" : ""} onClick={() => setSubject(subj)}>{subj}</button>
+            <button className="icon-edit-btn" title={`Rename "${subj}"`} onClick={e => { e.stopPropagation(); setRenamingSubject(subj); setRenameVal(subj); setRenameError(""); }}>✏️</button>
           </span>
         ))}
       </div>
-
-      {/* Inline rename editor */}
       {renamingSubject && (
         <div className="card" style={{ marginTop: 10, padding: "12px 16px", display: "flex", flexDirection: "column", gap: 8 }}>
-          <div style={{ fontWeight: 600, fontSize: "0.9em" }}>✏️ Rename subject: <em>{renamingSubject}</em></div>
+          <div style={{ fontWeight: 600, fontSize: "0.9em" }}>✏️ Rename: <em>{renamingSubject}</em></div>
           {renameError && <div className="error-banner">{renameError}</div>}
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <input
-              value={renameVal}
-              onChange={(e) => setRenameVal(e.target.value)}
-              autoFocus
-              style={{ flex: "1 1 160px" }}
-              onKeyDown={(e) => { if (e.key === "Enter") saveRename(); if (e.key === "Escape") setRenamingSubject(null); }}
-            />
-            <button onClick={saveRename} disabled={renameBusy || !renameVal.trim()}>
-              {renameBusy ? "Saving…" : "Save"}
-            </button>
+            <input value={renameVal} onChange={e => setRenameVal(e.target.value)} autoFocus style={{ flex: "1 1 160px" }} onKeyDown={e => { if (e.key === "Enter") saveRename(); if (e.key === "Escape") setRenamingSubject(null); }} />
+            <button onClick={saveRename} disabled={renameBusy || !renameVal.trim()}>{renameBusy ? "Saving…" : "Save"}</button>
             <button className="secondary" onClick={() => setRenamingSubject(null)}>Cancel</button>
           </div>
-          <div style={{ fontSize: "0.78em", opacity: 0.6 }}>Renames this subject across all papers instantly.</div>
         </div>
       )}
-
-      {rows.length === 0 ? (
-        <p className="muted">No attempts recorded yet for {activeSubject}.</p>
-      ) : (
+      {!rows.length ? <p className="muted">No attempts for {activeSubject} yet.</p> : (
         <table className="scoreboard">
-          <thead>
-            <tr>
-              <th>Roll</th><th>Name</th><th>Avg</th>
-              {topics.map((t) => <th key={t}>{t}</th>)}
-            </tr>
-          </thead>
+          <thead><tr>
+            <th>Roll</th><th>Name</th><th title="Attendance %">Att%</th><th>Avg%</th>
+            {topics.map(t => <th key={t}>{t}</th>)}
+          </tr></thead>
           <tbody>
             {rows.map((r, i) => (
               <tr key={r.rollno} className={i === 0 ? "winner-row" : ""}>
-                <td>{r.rollno}</td>
-                <td>{toTitleCase(r.name)}</td>
+                <td>{r.rollno}</td><td>{toTitleCase(r.name)}</td>
+                <td className={`att-col ${attCls(r.att)}`}>{r.att}%</td>
                 <td className="avg-col">{r.avg}%</td>
-                {topics.map((t) => (
-                  <td key={t}>
-                    {r.breakdown[t]
-                      ? `${r.breakdown[t].score}/${r.breakdown[t].total}`
-                      : <span className="absent-dash" title="Absent / not attempted">—</span>}
-                  </td>
-                ))}
+                {topics.map(t => <td key={t}>{r.breakdown[t] ? `${r.breakdown[t].score}/${r.breakdown[t].total}` : <span className="absent-dash" title="Absent">—</span>}</td>)}
               </tr>
             ))}
           </tbody>
@@ -513,44 +510,33 @@ function SubjectPerformance() {
 }
 
 // ─── Overall Performance tab ──────────────────────────────────────────────────
-// Every subject combined per student. Avg always divided by the total marks
-// of ALL subjects, even those the student skipped — so being absent for a
-// test hurts your overall percentage (0 marks, full denominator).
+// Avg = mean of per-subject percentages (Python 60% + SE 70% = 65%).
+// Att% = mean of per-subject attendance percentages.
 function OverallPerformance() {
   const [attempts, setAttempts] = useState([]);
   const [error, setError] = useState("");
-
-  useEffect(() => {
-    api("/teacher/scores/detailed")
-      .then((d) => setAttempts(d.attempts))
-      .catch((err) => setError(err.message));
-  }, []);
-
+  useEffect(() => { api("/teacher/scores/detailed").then(d => setAttempts(d.attempts)).catch(e => setError(e.message)); }, []);
   if (error) return <div className="error-banner">{error}</div>;
-  if (attempts.length === 0) return <p className="muted">No attempts recorded yet.</p>;
-
-  const rows = aggregate(attempts, { subjectFilter: null, keyField: "subject" });
-  const subjects = latestFirst(attempts, null, "subject");
-
+  if (!attempts.length) return <p className="muted">No attempts recorded yet.</p>;
+  const norm = attempts.map(a => ({ ...a, subject: a.subject.replace(/\b\w/g, c => c.toUpperCase()) }));
+  const subjects = [...new Set(norm.map(a => a.subject))].sort();
+  const rows = overallRows(norm);
   return (
     <table className="scoreboard">
-      <thead>
-        <tr>
-          <th>Roll</th><th>Name</th><th>Avg</th>
-          {subjects.map((subj) => <th key={subj}>{subj}</th>)}
-        </tr>
-      </thead>
+      <thead><tr>
+        <th>Roll</th><th>Name</th><th title="Avg attendance across subjects">Att%</th><th title="Avg % across subjects">Avg%</th>
+        {subjects.map(s => <th key={s}>{s}</th>)}
+      </tr></thead>
       <tbody>
         {rows.map((r, i) => (
           <tr key={r.rollno} className={i === 0 ? "winner-row" : ""}>
-            <td>{r.rollno}</td>
-            <td>{toTitleCase(r.name)}</td>
-            <td className="avg-col">{r.avg}%</td>
-            {subjects.map((subj) => (
-              <td key={subj}>
-                {r.breakdown[subj]
-                  ? `${r.breakdown[subj].score}/${r.breakdown[subj].total}`
-                  : <span className="absent-dash" title="Absent / not attempted">—</span>}
+            <td>{r.rollno}</td><td>{toTitleCase(r.name)}</td>
+            <td className={`att-col ${attCls(r.avgAtt)}`}>{r.avgAtt}%</td>
+            <td className="avg-col">{r.avgPct}%</td>
+            {subjects.map(s => (
+              <td key={s}>{r.breakdown[s]
+                ? <span className={r.breakdown[s].pct >= 50 ? "att-good" : "att-low"}>{r.breakdown[s].pct}%</span>
+                : <span className="absent-dash">—</span>}
               </td>
             ))}
           </tr>
@@ -559,3 +545,4 @@ function OverallPerformance() {
     </table>
   );
 }
+

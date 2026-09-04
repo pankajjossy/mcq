@@ -334,8 +334,22 @@ table.scoreboard tr.winner-row { background: rgba(193, 163, 90, 0.2); font-weigh
   line-height: 1.5;
 }
 
-/* Action buttons inside MCQ/Short rows — always visible, consistent sizing.
-   These override base button styles that may be transparent on paper bg. */
+/* Force all buttons inside the cream/paper collapsible body to use dark text.
+   This is the root fix for the "blank button" issue in Firefox/Chrome. */
+.collapsible-body button,
+.collapsible-body .btn,
+.collapsible-body a.btn {
+  color: #1c1204;
+}
+.collapsible-body button.secondary,
+.collapsible-body a.btn.secondary {
+  background: transparent;
+  color: var(--paper-ink) !important;
+  border: 1.5px solid rgba(43,36,26,0.4);
+}
+.collapsible-body button.danger { color: var(--chalk) !important; }
+
+/* Action buttons inside MCQ/Short rows */
 .action-btn {
   font-family: var(--sans);
   font-size: 15px;
@@ -344,7 +358,7 @@ table.scoreboard tr.winner-row { background: rgba(193, 163, 90, 0.2); font-weigh
   border-radius: var(--radius);
   cursor: pointer;
   background: var(--accent);
-  color: #1c1204;
+  color: #1c1204 !important;
   border: none;
   text-decoration: none;
   display: inline-flex;
@@ -352,15 +366,14 @@ table.scoreboard tr.winner-row { background: rgba(193, 163, 90, 0.2); font-weigh
   white-space: nowrap;
 }
 .action-btn.secondary {
-  background: transparent;
-  color: var(--paper-ink);
+  background: transparent !important;
+  color: var(--paper-ink) !important;
   border: 1.5px solid rgba(43,36,26,0.35);
 }
-.action-btn.secondary:hover { background: rgba(43,36,26,0.08); }
-.action-btn.danger { background: var(--danger); color: var(--chalk); border: none; }
-a.action-btn.secondary { color: var(--paper-ink); }
+.action-btn.secondary:hover { background: rgba(43,36,26,0.08) !important; }
+.action-btn.danger { background: var(--danger) !important; color: var(--chalk) !important; border: none; }
 
-/* Inline paper review area — appears below the action bar after "View MCQ" */
+/* Paper review inline viewer */
 .paper-review-area {
   margin-top: 16px;
   padding-top: 14px;
@@ -368,3 +381,24 @@ a.action-btn.secondary { color: var(--paper-ink); }
   max-height: 520px;
   overflow-y: auto;
 }
+
+/* Inline MCQ full editor */
+.inline-editor-area {
+  padding: 4px 0 8px;
+}
+.questions-scroll {
+  max-height: 560px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.questions-scroll .question-block {
+  background: rgba(43,36,26,0.06);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+/* Attendance badge in performance tables */
+.att-col { color: #5a7c6a; font-weight: 600; }
+.att-good { color: var(--good); }
+.att-warn { color: #b07820; }
+.att-low  { color: var(--danger); }
