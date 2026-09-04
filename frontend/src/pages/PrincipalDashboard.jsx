@@ -52,9 +52,14 @@ export default function PrincipalDashboard() {
   function groupByDate(papers) {
     const map = {};
     for (const p of papers) {
-      (map[p.date] ||= []).push(p);
+      const d = (p.date && p.date !== "null") ? p.date : "Unpublished";
+      (map[d] ||= []).push(p);
     }
-    return Object.entries(map).sort(([a], [b]) => b.localeCompare(a));
+    return Object.entries(map).sort(([a], [b]) => {
+      if (a === "Unpublished") return -1;
+      if (b === "Unpublished") return 1;
+      return b.localeCompare(a);
+    });
   }
 
   return (
@@ -114,12 +119,14 @@ export default function PrincipalDashboard() {
 
                 {grouped.map(([date, papers]) => (
                   <div key={date} style={{ marginBottom: 10 }}>
-                    <div className="eyebrow" style={{ fontSize: 11, marginBottom: 4 }}>{new Date(date).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" })}</div>
+                    <div className="eyebrow" style={{ fontSize: 11, marginBottom: 4 }}>
+                      {date === "Unpublished" ? date : new Date(date).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" })}
+                    </div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                       {papers.map((p, i) => (
                         <div key={i} className="card" style={{ padding: "6px 12px", minWidth: 140, background: "rgba(43,36,26,0.05)" }}>
                           <div style={{ fontWeight: 600, fontSize: 14 }}>
-                            {i + 1} – {toTitleCase(p.subject)}{p.topic ? ` (${toTitleCase(p.topic)})` : ""} <span className="muted">({p.time_str})</span>
+                            {i + 1} – {toTitleCase(p.subject)}{p.topic ? ` (${toTitleCase(p.topic)})` : ""} <span className="muted">({p.time_str || "N/A"})</span>
                           </div>
                           <div className="muted" style={{ fontSize: 12 }}>{p.semester}</div>
                         </div>

@@ -132,17 +132,20 @@ function WallPost({ post: p, isMine, isTeacher, session, onRefresh, setError }) 
     : null;
 
   return (
-    <div className="wall-post">
-      <div className="post-head">
-        <div>
-          <span className="post-author">{toTitleCase(p.author_name)}</span>
-          {p.author_role === "teacher" && <span className="muted"> · teacher</span>}
-        </div>
-        <span className="post-meta">{new Date(p.created_at).toLocaleString()}{p.updated_at ? " (edited)" : ""}</span>
-      </div>
-
-      {/* Attached MCQ paper collapsible */}
-      {p.mcq_set_id && <AttachedPaper mcqSetId={p.mcq_set_id} headStr={headStr} />}
+    <div style={{ marginBottom: 12 }}>
+      <Collapsible
+        head={
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+            <span style={{ fontWeight: 600 }}>{toTitleCase(p.author_name)}</span>
+            {p.author_role === "teacher" && <span className="muted" style={{ fontWeight: "normal", fontSize: 13 }}>Teacher</span>}
+            <span className="muted" style={{ fontWeight: "normal", fontSize: 13 }}>· {p.body.substring(0, 45)}{p.body.length > 45 ? "..." : ""}</span>
+          </div>
+        }
+        meta={`${new Date(p.created_at).toLocaleDateString()} ${new Date(p.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}${p.updated_at ? " (edited)" : ""}`}
+        className="wall-post"
+      >
+        {/* Attached MCQ paper */}
+        {p.mcq_set_id && <AttachedPaper mcqSetId={p.mcq_set_id} headStr={headStr} />}
 
       {/* Post body or editor */}
       {editing ? (
@@ -193,6 +196,7 @@ function WallPost({ post: p, isMine, isTeacher, session, onRefresh, setError }) 
           <button type="submit" disabled={busy}>Send</button>
         </form>
       )}
+      </Collapsible>
     </div>
   );
 }
