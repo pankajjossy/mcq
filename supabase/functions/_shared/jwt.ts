@@ -9,14 +9,14 @@ export function signToken(payload: any): string {
 
 export interface AuthUser {
   id: number;
-  role: "teacher" | "student" | "admin";
+  role: "teacher" | "student" | "admin" | "principal";
   name: string;
   semester?: string;
 }
 
 // Reads the Authorization: Bearer <token> header, verifies it, and checks
 // the role matches. Returns the decoded user or null (caller returns 401/403).
-export function requireAuth(req: Request, role: "teacher" | "student" | "admin"): AuthUser | null {
+export function requireAuth(req: Request, role: "teacher" | "student" | "admin" | "principal"): AuthUser | null {
   const header = req.headers.get("authorization") || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : null;
   if (!token) return null;

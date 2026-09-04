@@ -122,7 +122,6 @@ function McqRow({ set: s, onUpload, onDelete, navigate }) {
               <>
                 <button className="action-btn" onClick={upload}>Upload</button>
                 <button className="action-btn secondary" onClick={togglePaper}>{paper ? "Hide MCQ" : "View MCQ"}</button>
-                <button className="action-btn secondary" onClick={() => setMode("edit")}>Edit MCQ</button>
               </>
             )}
             {s.status === "live" && (
@@ -136,9 +135,10 @@ function McqRow({ set: s, onUpload, onDelete, navigate }) {
                 <button className="action-btn" onClick={reupload}>Re-upload</button>
                 <Link className="action-btn btn secondary" to={`/teacher/live/${s.id}`}>View Results</Link>
                 <button className="action-btn secondary" onClick={togglePaper}>{paper ? "Hide MCQ" : "View MCQ"}</button>
-                <button className="action-btn secondary" onClick={() => setMode("edit")}>Edit MCQ</button>
               </>
             )}
+            {/* Edit MCQ always visible regardless of status */}
+            <button className="action-btn secondary" onClick={() => setMode("edit")}>Edit MCQ</button>
             <button className="action-btn danger" onClick={() => onDelete(s.id)}>Delete</button>
           </div>
           {paper && (

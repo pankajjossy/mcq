@@ -1,16 +1,19 @@
 // Edge Function: wall
 // A simple per-teacher discussion wall. Any logged-in teacher or student
 // can read/post/reply - a student's own posts and replies are editable by
-// that student, a teacher's own by that teacher. Requires either a teacher
-// or a student JWT (Authorization: Bearer <token>).
+// that student, a teacher's own by that teacher.
 //
-// Routes, matched by path after /functions/v1/wall:
-//   GET  /teachers                       -> { teachers }        (students only: teachers whose papers they've taken)
+// Routes:
+//   GET  /teachers                       -> { teachers }
 //   GET  /:teacherId                     -> { teacherName, posts }
-//   POST /:teacherId/posts   { body, mcqSetId? } -> { id }
-//   PUT  /posts/:id          { body }             -> { ok }     (author only)
-//   POST /posts/:id/replies  { body }             -> { id }
-//   PUT  /replies/:id        { body }             -> { ok }     (author only)
+//   POST /:teacherId/posts   { body, mcqSetId? }  -> { id }
+//   PUT  /posts/:id          { body }             -> { ok }   (author only)
+//   DELETE /posts/:id                            -> { ok }   (author only)
+//   POST /posts/:id/replies  { body }            -> { id }
+//   PUT  /replies/:id        { body }            -> { ok }   (author only)
+//   DELETE /replies/:id                         -> { ok }   (author only)
+//   POST /replies/:id/star   { stars }           -> { ok }   (teacher only)
+//   GET  /mcq/:id                               -> { set, questions }
 
 import { query } from "../_shared/db.ts";
 import { requireAnyAuth, type AuthUser } from "../_shared/jwt.ts";
@@ -30,6 +33,7 @@ Deno.serve(async (req: Request) => {
   const postMatch = path.match(/^\/posts\/(\d+)$/);
   const repliesMatch = path.match(/^\/posts\/(\d+)\/replies$/);
   const replyMatch = path.match(/^\/replies\/(\d+)$/);
+  const replyStarMatch = path.match(/^\/replies\/(\d+)\/star$/);
   const mcqReviewMatch = path.match(/^\/mcq\/(\d+)$/);
 
   try {
@@ -38,8 +42,11 @@ Deno.serve(async (req: Request) => {
     if (req.method === "GET" && teacherWallMatch) return await getWall(teacherWallMatch[1], user);
     if (req.method === "POST" && postsMatch) return await createPost(req, postsMatch[1], user);
     if (req.method === "PUT" && postMatch) return await editPost(req, postMatch[1], user);
+    if (req.method === "DELETE" && postMatch) return await deletePost(postMatch[1], user);
     if (req.method === "POST" && repliesMatch) return await createReply(req, repliesMatch[1], user);
     if (req.method === "PUT" && replyMatch) return await editReply(req, replyMatch[1], user);
+    if (req.method === "DELETE" && replyMatch) return await deleteReply(replyMatch[1], user);
+    if (req.method === "POST" && replyStarMatch) return await starReply(req, replyStarMatch[1], user);
 
     return json({ error: "Not found." }, 404);
   } catch (err) {
@@ -48,8 +55,6 @@ Deno.serve(async (req: Request) => {
   }
 });
 
-// Teachers a student has taken at least one paper from - used to build the
-// "whose wall do you want to visit" list on the student side.
 async function myTeachers(user: AuthUser) {
   if (user.role !== "student") return json({ error: "Students only." }, 403);
   const result = await query(
@@ -70,7 +75,7 @@ async function getWall(teacherId: string, _user: AuthUser) {
 
   const posts = await query(
     `SELECT p.id, p.author_role, p.body, p.created_at, p.updated_at,
-            p.author_teacher_id, p.author_student_id,
+            p.author_teacher_id, p.author_student_id, p.mcq_set_id,
             COALESCE(pt.name, ps.name) AS author_name,
             ms.subject AS mcq_subject,
             ms.topic AS mcq_topic
@@ -78,7 +83,7 @@ async function getWall(teacherId: string, _user: AuthUser) {
      LEFT JOIN teachers pt ON pt.id = p.author_teacher_id
      LEFT JOIN students ps ON ps.id = p.author_student_id
      LEFT JOIN mcq_sets ms ON ms.id = p.mcq_set_id
-     WHERE p.teacher_id = $1
+     WHERE p.teacher_id = $1 AND p.deleted_at IS NULL
      ORDER BY p.created_at DESC`,
     [teacherId]
   );
@@ -88,12 +93,12 @@ async function getWall(teacherId: string, _user: AuthUser) {
   if (postIds.length > 0) {
     const replies = await query(
       `SELECT r.id, r.post_id, r.author_role, r.body, r.created_at, r.updated_at,
-              r.author_teacher_id, r.author_student_id,
+              r.author_teacher_id, r.author_student_id, r.star_rating,
               COALESCE(rt.name, rs.name) AS author_name
        FROM wall_replies r
        LEFT JOIN teachers rt ON rt.id = r.author_teacher_id
        LEFT JOIN students rs ON rs.id = r.author_student_id
-       WHERE r.post_id = ANY($1)
+       WHERE r.post_id = ANY($1) AND r.deleted_at IS NULL
        ORDER BY r.created_at ASC`,
       [postIds]
     );
@@ -146,12 +151,23 @@ async function editPost(req: Request, postId: string, user: AuthUser) {
   return json({ ok: true });
 }
 
+async function deletePost(postId: string, user: AuthUser) {
+  const ownerCol = user.role === "teacher" ? "author_teacher_id" : "author_student_id";
+  const result = await query(
+    `UPDATE wall_posts SET deleted_at=now()
+     WHERE id=$1 AND author_role=$2 AND ${ownerCol}=$3 RETURNING id`,
+    [postId, user.role, user.id]
+  );
+  if (result.rowCount === 0) return json({ error: "You can only delete your own posts." }, 403);
+  return json({ ok: true });
+}
+
 async function createReply(req: Request, postId: string, user: AuthUser) {
   const body = await req.json().catch(() => ({}));
   const text = (body.body || "").toString().trim();
   if (!text) return json({ error: "Write something first." }, 400);
 
-  const postCheck = await query("SELECT id FROM wall_posts WHERE id=$1", [postId]);
+  const postCheck = await query("SELECT id FROM wall_posts WHERE id=$1 AND deleted_at IS NULL", [postId]);
   if (postCheck.rowCount === 0) return json({ error: "Post not found." }, 404);
 
   const result = await query(
@@ -177,13 +193,31 @@ async function editReply(req: Request, replyId: string, user: AuthUser) {
   return json({ ok: true });
 }
 
-// Lets a wall post that references a test be expanded in place, for anyone
-// (not just the student who took it) - but only once that paper is no
-// longer live-and-in-progress, so the answer key can't leak to someone
-// about to sit the same test.
+async function deleteReply(replyId: string, user: AuthUser) {
+  const ownerCol = user.role === "teacher" ? "author_teacher_id" : "author_student_id";
+  const result = await query(
+    `UPDATE wall_replies SET deleted_at=now()
+     WHERE id=$1 AND author_role=$2 AND ${ownerCol}=$3 RETURNING id`,
+    [replyId, user.role, user.id]
+  );
+  if (result.rowCount === 0) return json({ error: "You can only delete your own replies." }, 403);
+  return json({ ok: true });
+}
+
+async function starReply(req: Request, replyId: string, user: AuthUser) {
+  if (user.role !== "teacher") return json({ error: "Only teachers can give stars." }, 403);
+  const body = await req.json().catch(() => ({}));
+  const stars = Math.min(5, Math.max(1, Number(body.stars) || 1));
+  await query(
+    `UPDATE wall_replies SET star_rating=$1 WHERE id=$2`,
+    [stars, replyId]
+  );
+  return json({ ok: true });
+}
+
 async function pastPaper(id: string) {
   const setResult = await query(
-    `SELECT id, subject, semester, title FROM mcq_sets
+    `SELECT id, subject, topic, semester, title FROM mcq_sets
      WHERE id=$1 AND (status='closed' OR (status='live' AND opened_at < now() - interval '40 minutes'))`,
     [id]
   );

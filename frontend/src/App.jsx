@@ -9,12 +9,14 @@ import TakeTest from "./pages/TakeTest.jsx";
 import TakeShortTest from "./pages/TakeShortTest.jsx";
 import Wall from "./pages/Wall.jsx";
 import Admin from "./pages/Admin.jsx";
+import PrincipalDashboard from "./pages/PrincipalDashboard.jsx";
 
 export default function App() {
   return (
     <Routes>
       <Route path="/" element={<Login />} />
       <Route path="/admin" element={<Admin />} />
+      <Route path="/principal" element={<PrincipalDashboard />} />
       <Route path="/teacher" element={<TeacherDashboard />} />
       <Route path="/teacher/build" element={<TeacherBuildMcq />} />
       <Route path="/teacher/build/:id" element={<TeacherBuildMcq />} />

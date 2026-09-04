@@ -2,10 +2,7 @@
 // Routes (all POST), matched by the path after /functions/v1/auth:
 //   /teacher/register  /teacher/login
 //   /student/register  /student/login
-//
-// This mirrors the old Express auth.js route-for-route - same validation,
-// same error messages, same unique-violation (23505) handling for
-// duplicate login names / roll numbers.
+//   /principal/register  /principal/login
 
 import bcrypt from "npm:bcryptjs@2.4.3";
 import { query } from "../_shared/db.ts";
@@ -17,7 +14,6 @@ Deno.serve(async (req: Request) => {
   if (preflight) return preflight;
 
   const url = new URL(req.url);
-  // Path looks like /auth/teacher/register - strip the function name itself.
   const path = url.pathname.replace(/^\/auth/, "");
 
   if (req.method !== "POST") {
@@ -36,6 +32,8 @@ Deno.serve(async (req: Request) => {
     if (path === "/teacher/login") return await teacherLogin(body);
     if (path === "/student/register") return await studentRegister(body);
     if (path === "/student/login") return await studentLogin(body);
+    if (path === "/principal/register") return await principalRegister(body);
+    if (path === "/principal/login") return await principalLogin(body);
     return json({ error: "Not found." }, 404);
   } catch (err) {
     console.error(err);
@@ -44,15 +42,17 @@ Deno.serve(async (req: Request) => {
 });
 
 async function teacherRegister(body: Record<string, unknown>) {
-  const { name, loginName, password } = body as { name?: string; loginName?: string; password?: string };
-  if (!name || !loginName || !password) {
-    return json({ error: "Name, login name and password are all required." }, 400);
+  const { name, loginName, password, department } = body as {
+    name?: string; loginName?: string; password?: string; department?: string;
+  };
+  if (!name || !loginName || !password || !department) {
+    return json({ error: "Name, department, login name and password are all required." }, 400);
   }
   try {
     const hash = await bcrypt.hash(password, 10);
     const result = await query(
-      "INSERT INTO teachers (name, login_name, password_hash) VALUES ($1,$2,$3) RETURNING id, name, login_name",
-      [name, loginName, hash]
+      "INSERT INTO teachers (name, login_name, password_hash, department) VALUES ($1,$2,$3,$4) RETURNING id, name, login_name, department",
+      [name, loginName, hash, department]
     );
     const teacher = result.rows[0];
     const token = signToken({ id: teacher.id, role: "teacher", name: teacher.name });
@@ -73,24 +73,21 @@ async function teacherLogin(body: Record<string, unknown>) {
     return json({ error: "Incorrect login name or password." }, 401);
   }
   const token = signToken({ id: teacher.id, role: "teacher", name: teacher.name });
-  return json({ token, teacher: { id: teacher.id, name: teacher.name, login_name: teacher.login_name } });
+  return json({ token, teacher: { id: teacher.id, name: teacher.name, login_name: teacher.login_name, department: teacher.department } });
 }
 
 async function studentRegister(body: Record<string, unknown>) {
-  const { name, semester, rollno, password } = body as {
-    name?: string;
-    semester?: string;
-    rollno?: string;
-    password?: string;
+  const { name, semester, rollno, password, department } = body as {
+    name?: string; semester?: string; rollno?: string; password?: string; department?: string;
   };
-  if (!name || !semester || !rollno || !password) {
-    return json({ error: "Name, semester, roll number and password are all required." }, 400);
+  if (!name || !semester || !rollno || !password || !department) {
+    return json({ error: "Name, department, semester, roll number and password are all required." }, 400);
   }
   try {
     const hash = await bcrypt.hash(password, 10);
     const result = await query(
-      "INSERT INTO students (name, semester, rollno, password_hash) VALUES ($1,$2,$3,$4) RETURNING id, name, semester, rollno",
-      [name, semester, rollno, hash]
+      "INSERT INTO students (name, semester, rollno, password_hash, department) VALUES ($1,$2,$3,$4,$5) RETURNING id, name, semester, rollno, department",
+      [name, semester, rollno, hash, department]
     );
     const student = result.rows[0];
     const token = signToken({ id: student.id, role: "student", name: student.name, semester: student.semester });
@@ -113,6 +110,37 @@ async function studentLogin(body: Record<string, unknown>) {
   const token = signToken({ id: student.id, role: "student", name: student.name, semester: student.semester });
   return json({
     token,
-    student: { id: student.id, name: student.name, semester: student.semester, rollno: student.rollno },
+    student: { id: student.id, name: student.name, semester: student.semester, rollno: student.rollno, department: student.department },
   });
+}
+
+async function principalRegister(body: Record<string, unknown>) {
+  const { name, loginName, password } = body as { name?: string; loginName?: string; password?: string };
+  if (!name || !loginName || !password) {
+    return json({ error: "Name, login name and password are all required." }, 400);
+  }
+  // Only allow one principal account
+  const existing = await query("SELECT id FROM principals LIMIT 1", []);
+  if ((existing.rowCount ?? 0) > 0) {
+    return json({ error: "A principal account already exists. Please log in instead." }, 409);
+  }
+  const hash = await bcrypt.hash(password, 10);
+  const result = await query(
+    "INSERT INTO principals (name, login_name, password_hash) VALUES ($1,$2,$3) RETURNING id, name, login_name",
+    [name, loginName, hash]
+  );
+  const principal = result.rows[0];
+  const token = signToken({ id: principal.id, role: "principal", name: principal.name });
+  return json({ token, principal });
+}
+
+async function principalLogin(body: Record<string, unknown>) {
+  const { loginName, password } = body as { loginName?: string; password?: string };
+  const result = await query("SELECT * FROM principals WHERE login_name=$1", [loginName]);
+  const principal = result.rows[0];
+  if (!principal || !password || !(await bcrypt.compare(password, principal.password_hash))) {
+    return json({ error: "Incorrect login name or password." }, 401);
+  }
+  const token = signToken({ id: principal.id, role: "principal", name: principal.name });
+  return json({ token, principal: { id: principal.id, name: principal.name, login_name: principal.login_name } });
 }

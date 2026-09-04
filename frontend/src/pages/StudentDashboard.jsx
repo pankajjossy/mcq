@@ -149,13 +149,12 @@ function ArchiveMcqRow({ t }) {
     if (!t.teacher_id) return;
     setPosting(true);
     try {
-      await api(`/wall/${t.teacher_id}/posts`, { method: "POST", body: { body: "Can we discuss this test?", mcqSetId: t.id } });
+      await api(`/wall/${t.teacher_id}/posts`, {
+        method: "POST",
+        body: { body: `📝 Sharing my test result — ${t.subject}${t.topic ? " · " + t.topic : ""} — scored ${t.score}/${t.total}`, mcqSetId: t.id }
+      });
       setWallPosted(true);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setPosting(false);
-    }
+    } catch (e) { console.error(e); } finally { setPosting(false); }
   }
 
   return (
@@ -164,21 +163,18 @@ function ArchiveMcqRow({ t }) {
       meta={`${formatWhen(t.submitted_at)} · ${t.score}/${t.total}`}
       done
     >
-      {!review ? (
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <button className="secondary" onClick={() => api(`/student/mcq/${t.id}/review`).then(setReview)}>
-            Review answers
-          </button>
-          <Link className="btn secondary" style={{ textDecoration: "none", color: "inherit" }} to={`/student/test/${t.id}?practice=true`}>
-            Retake (practice)
-          </Link>
-          <button className="secondary" onClick={postToWall} disabled={wallPosted || posting}>
-            {wallPosted ? "Posted to Wall" : posting ? "Posting..." : "Post to Wall"}
-          </button>
-        </div>
-      ) : (
-        <PaperReview questions={review.questions} />
-      )}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+        <button className="secondary" onClick={() => api(`/student/mcq/${t.id}/review`).then(setReview)}>
+          {review ? "Refresh Review" : "Review answers"}
+        </button>
+        <Link className="btn secondary" style={{ textDecoration: "none", color: "inherit" }} to={`/student/test/${t.id}?practice=true`}>
+          Re-Test
+        </Link>
+        <button className="secondary" onClick={postToWall} disabled={wallPosted || posting}>
+          {wallPosted ? "✓ Tweeted to Wall" : posting ? "Posting…" : "🐦 Tweet to Wall"}
+        </button>
+      </div>
+      {review && <PaperReview questions={review.questions} />}
     </Collapsible>
   );
 }

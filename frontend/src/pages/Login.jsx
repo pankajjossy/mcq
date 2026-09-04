@@ -1,23 +1,29 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, saveSession, wakeBackend } from "../api.js";
+import { api, saveSession } from "../api.js";
 
 export default function Login() {
   const [role, setRole] = useState("teacher");
   const [mode, setMode] = useState("login"); // login | register
-  const [form, setForm] = useState({ name: "", loginName: "", semester: "", rollno: "", password: "" });
+  const [showPrincipal, setShowPrincipal] = useState(false);
+  const [form, setForm] = useState({ name: "", loginName: "", department: "", semester: "", rollno: "", password: "" });
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [waking, setWaking] = useState(false);
-  const [adminName, setAdminName] = useState("");
   const navigate = useNavigate();
 
+  // Ctrl+Alt+P reveals the hidden Principal tab
   useEffect(() => {
-    // Render's free tier sleeps after idle; give people an honest status
-    // instead of a login button that looks broken for up to a minute.
-    wakeBackend(setWaking);
-    // Fetch admin display name for the page title.
-    api("/admin/info").then((d) => setAdminName(d.name || "")).catch(() => {});
+    function onKey(e) {
+      if (e.ctrlKey && e.altKey && e.key === "p") {
+        setShowPrincipal(true);
+        setRole("principal");
+        setMode("login");
+        setNotice("");
+        setError("");
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
@@ -28,27 +34,39 @@ export default function Login() {
     setNotice("");
     try {
       let path, body;
+
       if (role === "teacher") {
         path = mode === "login" ? "/auth/teacher/login" : "/auth/teacher/register";
         body = mode === "login"
           ? { loginName: form.loginName, password: form.password }
-          : { name: form.name, loginName: form.loginName, password: form.password };
-      } else {
+          : { name: form.name, loginName: form.loginName, department: form.department, password: form.password };
+
+      } else if (role === "student") {
         path = mode === "login" ? "/auth/student/login" : "/auth/student/register";
         body = mode === "login"
           ? { semester: form.semester, rollno: form.rollno, password: form.password }
-          : { name: form.name, semester: form.semester, rollno: form.rollno, password: form.password };
+          : { name: form.name, department: form.department, semester: form.semester, rollno: form.rollno, password: form.password };
+
+      } else {
+        // principal
+        path = mode === "login" ? "/auth/principal/login" : "/auth/principal/register";
+        body = mode === "login"
+          ? { loginName: form.loginName, password: form.password }
+          : { name: form.name, loginName: form.loginName, password: form.password };
       }
+
       const data = await api(path, { method: "POST", body });
 
       if (mode === "register") {
-        // Registration no longer logs the person straight in - it hands
-        // them to the login form instead, so "register then log in" is an
-        // explicit, visible step rather than something that happens for
-        // them silently.
         setMode("login");
-        setForm({ ...form, name: "", password: "" });
-        setNotice("Registered! Now log in below to appear your MCQ test.");
+        setForm({ ...form, name: "", department: "", password: "" });
+        setNotice("Registered! Now log in.");
+        return;
+      }
+
+      if (role === "principal") {
+        saveSession(data.token, data.principal, "principal");
+        navigate("/principal");
         return;
       }
 
@@ -60,15 +78,24 @@ export default function Login() {
     }
   }
 
+  function switchRole(r) {
+    setRole(r);
+    setMode("login");
+    setNotice("");
+    setError("");
+    if (r !== "principal") setShowPrincipal(r === "principal");
+  }
+
   return (
     <div className="app-shell" style={{ maxWidth: 420 }}>
-      <h1 className="lms-title">LMS AI for better education</h1>
-      <p className="lms-tagline">{adminName ? `(${adminName})` : ""}</p>
+      <h1 className="lms-title">LMS — AI for better education</h1>
 
       <div className="role-toggle">
-        <a className={role === "teacher" ? "active" : ""} onClick={() => { setRole("teacher"); setNotice(""); }}>Teacher</a>
-        <a className={role === "student" ? "active" : ""} onClick={() => { setRole("student"); setNotice(""); }}>Student</a>
-        <a onClick={() => navigate("/admin")}>Admin</a>
+        <a className={role === "teacher" ? "active" : ""} onClick={() => switchRole("teacher")}>Teacher</a>
+        <a className={role === "student" ? "active" : ""} onClick={() => switchRole("student")}>Student</a>
+        {showPrincipal && (
+          <a className={role === "principal" ? "active" : ""} onClick={() => switchRole("principal")}>Principal</a>
+        )}
       </div>
 
       <div className="role-toggle" style={{ marginTop: 4 }}>
@@ -85,16 +112,10 @@ export default function Login() {
           {notice}
         </div>
       )}
-
-      {waking && (
-        <div className="error-banner" style={{ background: "#1e3a5f", color: "#cfe8ff" }}>
-          Waking up the server (it sleeps when idle to stay free) — this can take up to a minute on
-          the first try. Feel free to wait here; it'll be quick after this.
-        </div>
-      )}
       {error && <div className="error-banner">{error}</div>}
 
-      <form onSubmit={submit} className="card" aria-disabled={waking}>
+      <form onSubmit={submit} className="card">
+        {/* NAME — shown only on register */}
         {mode === "register" && (
           <div className="field">
             <label>Full name</label>
@@ -102,16 +123,28 @@ export default function Login() {
           </div>
         )}
 
-        {role === "teacher" ? (
+        {/* DEPARTMENT — shown on register for teacher & student */}
+        {mode === "register" && role !== "principal" && (
+          <div className="field">
+            <label>Department (e.g. CS, IT, Mech)</label>
+            <input value={form.department} onChange={set("department")} required />
+          </div>
+        )}
+
+        {/* TEACHER / PRINCIPAL fields */}
+        {(role === "teacher" || role === "principal") && (
           <div className="field">
             <label>Login name</label>
-            <input value={form.loginName} onChange={set("loginName")} required />
+            <input value={form.loginName} onChange={set("loginName")} required autoComplete="username" />
           </div>
-        ) : (
+        )}
+
+        {/* STUDENT fields */}
+        {role === "student" && (
           <>
             <div className="field">
-              <label>Semester</label>
-              <input value={form.semester} onChange={set("semester")} required placeholder="e.g. Sem 3" />
+              <label>Semester (e.g. Sem 1)</label>
+              <input value={form.semester} onChange={set("semester")} required />
             </div>
             <div className="field">
               <label>Roll number</label>
@@ -122,11 +155,17 @@ export default function Login() {
 
         <div className="field">
           <label>Password</label>
-          <input type="password" value={form.password} onChange={set("password")} required />
+          <input type="password" value={form.password} onChange={set("password")} required autoComplete="current-password" />
         </div>
 
         <button type="submit">{mode === "login" ? "Log in" : "Register"}</button>
       </form>
+
+      {role === "principal" && mode === "login" && (
+        <p className="muted" style={{ textAlign: "center", fontSize: 12, marginTop: 6 }}>
+          Press Ctrl+Alt+P to access the principal portal.
+        </p>
+      )}
     </div>
   );
 }
