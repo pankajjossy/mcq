@@ -33,7 +33,13 @@ async function getDepartments() {
   const r = await query(
     "SELECT DISTINCT department FROM teachers WHERE department != '' ORDER BY department"
   );
-  return json({ departments: r.rows.map((x: { department: string }) => x.department) });
+  const sr = await query(
+    "SELECT DISTINCT semester FROM students WHERE semester != '' ORDER BY semester"
+  );
+  return json({ 
+    departments: r.rows.map((x: { department: string }) => x.department),
+    semesters: sr.rows.map((x: { semester: string }) => x.semester)
+  });
 }
 
 async function getTeachers(url: URL) {
