@@ -72,7 +72,8 @@ async function getWall(teacherId: string, _user: AuthUser) {
     `SELECT p.id, p.author_role, p.body, p.created_at, p.updated_at,
             p.author_teacher_id, p.author_student_id,
             COALESCE(pt.name, ps.name) AS author_name,
-            ms.subject AS mcq_subject
+            ms.subject AS mcq_subject,
+            ms.topic AS mcq_topic
      FROM wall_posts p
      LEFT JOIN teachers pt ON pt.id = p.author_teacher_id
      LEFT JOIN students ps ON ps.id = p.author_student_id

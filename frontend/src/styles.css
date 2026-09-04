@@ -192,12 +192,18 @@ table.scoreboard th { color: var(--accent); font-weight: 600; }
 .wall-post .post-body { margin: 8px 0; white-space: pre-wrap; }
 .wall-post .post-actions { display: flex; gap: 14px; font-size: 14px; }
 .wall-post .post-actions a { cursor: pointer; }
-.wall-reply {
-  background: rgba(43,36,26,0.06); border-radius: var(--radius);
-  padding: 10px 12px; margin-top: 10px; margin-left: 16px;
+.replies-container {
+  margin-top: 14px;
+  border-left: 2px solid rgba(43,36,26,0.12);
+  padding-left: 14px;
 }
+.wall-reply {
+  background: transparent;
+  padding: 6px 0; margin-bottom: 10px;
+}
+.wall-reply:last-child { margin-bottom: 0; }
 .wall-reply .post-body { margin: 4px 0; }
-.reply-box { margin-top: 10px; display: flex; gap: 8px; }
+.reply-box { margin-top: 12px; display: flex; gap: 8px; }
 .reply-box textarea { min-height: 40px; }
 
 /* Cumulative scoreboard pivoted per test, and short-answer question editor */

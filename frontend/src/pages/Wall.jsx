@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { api, getSession } from "../api.js";
 import PaperReview from "../components/PaperReview.jsx";
+import Collapsible from "../components/Collapsible.jsx";
 import { toTitleCase } from "../format.js";
 
 export default function Wall() {
@@ -111,7 +112,7 @@ export default function Wall() {
             <span className="post-meta">{new Date(p.created_at).toLocaleString()}{p.updated_at ? " (edited)" : ""}</span>
           </div>
 
-          {p.mcq_set_id && <PaperLink mcqSetId={p.mcq_set_id} />}
+          {p.mcq_set_id && <PaperLink mcqSetId={p.mcq_set_id} subject={p.mcq_subject} topic={p.mcq_topic} />}
 
           {editing?.kind === "post" && editing.id === p.id ? (
             <div className="field">
@@ -130,31 +131,33 @@ export default function Wall() {
             {isMine(p) && editing?.id !== p.id && <a onClick={() => startEdit("post", p.id, p.body)}>Edit</a>}
           </div>
 
-          {p.replies.map((r) => (
-            <div className="wall-reply" key={r.id}>
-              <div className="post-head">
-                <div>
-                  <span className="post-author">{toTitleCase(r.author_name)}</span>
-                  {r.author_role === "teacher" && <span className="muted"> · teacher</span>}
-                </div>
-                <span className="post-meta">{new Date(r.created_at).toLocaleString()}{r.updated_at ? " (edited)" : ""}</span>
-              </div>
-              {editing?.kind === "reply" && editing.id === r.id ? (
-                <div className="field">
-                  <textarea rows="2" value={editText} onChange={(e) => setEditText(e.target.value)} />
-                  <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
-                    <button onClick={saveEdit}>Save</button>
-                    <button className="secondary" onClick={() => setEditing(null)}>Cancel</button>
+          <div className="replies-container">
+            {p.replies.map((r) => (
+              <div className="wall-reply" key={r.id}>
+                <div className="post-head">
+                  <div>
+                    <span className="post-author">{toTitleCase(r.author_name)}</span>
+                    {r.author_role === "teacher" && <span className="muted"> · teacher</span>}
                   </div>
+                  <span className="post-meta">{new Date(r.created_at).toLocaleString()}{r.updated_at ? " (edited)" : ""}</span>
                 </div>
-              ) : (
-                <div className="post-body">{r.body}</div>
-              )}
-              {isMine(r) && editing?.id !== r.id && (
-                <div className="post-actions"><a onClick={() => startEdit("reply", r.id, r.body)}>Edit</a></div>
-              )}
-            </div>
-          ))}
+                {editing?.kind === "reply" && editing.id === r.id ? (
+                  <div className="field">
+                    <textarea rows="2" value={editText} onChange={(e) => setEditText(e.target.value)} />
+                    <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                      <button onClick={saveEdit}>Save</button>
+                      <button className="secondary" onClick={() => setEditing(null)}>Cancel</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="post-body">{r.body}</div>
+                )}
+                {isMine(r) && editing?.id !== r.id && (
+                  <div className="post-actions"><a onClick={() => startEdit("reply", r.id, r.body)}>Edit</a></div>
+                )}
+              </div>
+            ))}
+          </div>
 
           {replyBoxFor === p.id && (
             <div className="reply-box">
@@ -168,12 +171,12 @@ export default function Wall() {
   );
 }
 
-function PaperLink({ mcqSetId }) {
+function PaperLink({ mcqSetId, subject, topic }) {
   const [paper, setPaper] = useState(null);
   const [err, setErr] = useState("");
 
-  async function toggle() {
-    if (paper) return setPaper(null);
+  async function loadPaper() {
+    if (paper) return;
     try {
       const data = await api(`/wall/mcq/${mcqSetId}`);
       setPaper(data);
@@ -182,15 +185,20 @@ function PaperLink({ mcqSetId }) {
     }
   }
 
+  const headStr = topic ? `${subject} - ${topic}` : (subject || "MCQ Paper");
+
   return (
-    <div style={{ margin: "8px 0" }}>
-      <a onClick={toggle}>{paper ? "Hide paper" : "View paper"}</a>
+    <div style={{ margin: "14px 0" }}>
       {err && <div className="error-banner">{err}</div>}
-      {paper && (
+      <Collapsible 
+        head={headStr} 
+        meta="Attached Paper"
+        onOpen={loadPaper}
+      >
         <div style={{ marginTop: 10 }}>
-          <PaperReview questions={paper.questions} />
+          {paper ? <PaperReview questions={paper.questions} /> : <p className="muted">Loading paper...</p>}
         </div>
-      )}
+      </Collapsible>
     </div>
   );
 }
