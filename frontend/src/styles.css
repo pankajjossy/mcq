@@ -333,3 +333,38 @@ table.scoreboard tr.winner-row { background: rgba(193, 163, 90, 0.2); font-weigh
   margin-top: 4px;
   line-height: 1.5;
 }
+
+/* Action buttons inside MCQ/Short rows — always visible, consistent sizing.
+   These override base button styles that may be transparent on paper bg. */
+.action-btn {
+  font-family: var(--sans);
+  font-size: 15px;
+  font-weight: 600;
+  padding: 9px 16px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  background: var(--accent);
+  color: #1c1204;
+  border: none;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+.action-btn.secondary {
+  background: transparent;
+  color: var(--paper-ink);
+  border: 1.5px solid rgba(43,36,26,0.35);
+}
+.action-btn.secondary:hover { background: rgba(43,36,26,0.08); }
+.action-btn.danger { background: var(--danger); color: var(--chalk); border: none; }
+a.action-btn.secondary { color: var(--paper-ink); }
+
+/* Inline paper review area — appears below the action bar after "View MCQ" */
+.paper-review-area {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1.5px dashed rgba(43,36,26,0.2);
+  max-height: 520px;
+  overflow-y: auto;
+}

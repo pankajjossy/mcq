@@ -142,34 +142,38 @@ function McqRow({ set: s, onUpload, onDelete, navigate }) {
             {/* ── ready ── */}
             {s.status === "ready" && (
               <>
-                <button onClick={upload}>Upload</button>
-                <button className="secondary" onClick={view}>{paper ? "Hide" : "View MCQ"}</button>
-                <button className="secondary" onClick={() => navigate(`/teacher/build/${s.id}`)}>Edit Questions</button>
+                <button className="action-btn" onClick={upload}>Upload</button>
+                <button className="action-btn secondary" onClick={view}>{paper ? "Hide MCQ" : "View MCQ"}</button>
+                <button className="action-btn secondary" onClick={() => navigate(`/teacher/build/${s.id}`)}>Edit MCQ</button>
               </>
             )}
             {/* ── live ── */}
             {s.status === "live" && (
               <>
-                <button onClick={closeAndShow}>Show Results</button>
-                <button className="secondary" onClick={view}>{paper ? "Hide" : "View MCQ"}</button>
+                <button className="action-btn" onClick={closeAndShow}>Show Results</button>
+                <button className="action-btn secondary" onClick={view}>{paper ? "Hide MCQ" : "View MCQ"}</button>
               </>
             )}
             {/* ── closed: Re-upload (new date), View Results, View MCQ, Edit MCQ ── */}
             {s.status === "closed" && (
               <>
-                <button onClick={reupload}>Re-upload</button>
-                <Link className="btn secondary" to={`/teacher/live/${s.id}`}>View Results</Link>
-                <button className="secondary" onClick={view}>{paper ? "Hide" : "View MCQ"}</button>
-                <button className="secondary" onClick={() => navigate(`/teacher/build/${s.id}`)}>Edit MCQ</button>
+                <button className="action-btn" onClick={reupload}>Re-upload</button>
+                <Link className="action-btn btn secondary" to={`/teacher/live/${s.id}`}>View Results</Link>
+                <button className="action-btn secondary" onClick={view}>{paper ? "Hide MCQ" : "View MCQ"}</button>
+                <button className="action-btn secondary" onClick={() => navigate(`/teacher/build/${s.id}`)}>Edit MCQ</button>
               </>
             )}
             {/* Always available — clicking this expands the card and shows the
                 correction form. Permanently updates subject/topic in the DB,
                 so scores re-group under the corrected subject name instantly. */}
             <button className="edit-label-btn" onClick={() => setEditingLabel(true)}>✏️ Edit Subject/Topic</button>
-            <button className="danger" onClick={() => onDelete(s.id)}>Delete</button>
+            <button className="danger action-btn" onClick={() => onDelete(s.id)}>Delete</button>
           </div>
-          {paper && <div style={{ marginTop: 14 }}><PaperReview questions={paper.questions} /></div>}
+          {paper && (
+            <div className="paper-review-area">
+              <PaperReview questions={paper.questions} />
+            </div>
+          )}
         </>
       )}
     </Collapsible>
@@ -386,20 +390,24 @@ function SubjectPerformance() {
 
   useEffect(() => { load(); }, []);
 
+  // Title Case the new name to match what backend stores
+  function toTCase(str) { return str.replace(/\b\w/g, (c) => c.toUpperCase()); }
+
   async function saveRename() {
-    if (!renameVal.trim() || renameVal.trim() === renamingSubject) {
+    if (!renameVal.trim()) {
       setRenamingSubject(null);
       return;
     }
+    const newName = toTCase(renameVal.trim());
     setRenameBusy(true);
     setRenameError("");
     try {
       await api("/teacher/rename-subject", {
         method: "PATCH",
-        body: { oldSubject: renamingSubject, newSubject: renameVal.trim() },
+        body: { oldSubject: renamingSubject, newSubject: newName },
       });
-      // Switch active tab to renamed subject
-      setSubject(renameVal.trim());
+      // Switch active tab to renamed subject (title-cased, matching DB)
+      setSubject(newName);
       setRenamingSubject(null);
       load();
     } catch (err) {
@@ -412,10 +420,16 @@ function SubjectPerformance() {
   if (error) return <div className="error-banner">{error}</div>;
   if (attempts.length === 0) return <p className="muted">No attempts recorded yet.</p>;
 
-  const subjects = [...new Set(attempts.map((a) => a.subject))].sort();
+  // Normalize all case-variants of subject names to their Title-Cased form
+  // so "python", "Python", "PYTHON" all merge under a single tab.
+  function normSubject(s) { return s.replace(/\b\w/g, (c) => c.toUpperCase()); }
+  // Patch attempts in-place so aggregate + latestFirst see canonical names
+  const normalizedAttempts = attempts.map((a) => ({ ...a, subject: normSubject(a.subject || "") }));
+
+  const subjects = [...new Set(normalizedAttempts.map((a) => a.subject))].sort();
   const activeSubject = subject || subjects[0];
-  const rows = aggregate(attempts, { subjectFilter: activeSubject, keyField: "topic" });
-  const topics = latestFirst(attempts, activeSubject, "topic");
+  const rows = aggregate(normalizedAttempts, { subjectFilter: activeSubject, keyField: "topic" });
+  const topics = latestFirst(normalizedAttempts, activeSubject, "topic");
 
   return (
     <>
@@ -430,15 +444,7 @@ function SubjectPerformance() {
             </button>
             <button
               title={`Rename "${subj}"`}
-              style={{
-                background: "none",
-                border: "none",
-                cursor: "pointer",
-                padding: "2px 4px",
-                fontSize: "0.85em",
-                opacity: 0.6,
-                lineHeight: 1,
-              }}
+              className="icon-edit-btn"
               onClick={(e) => {
                 e.stopPropagation();
                 setRenamingSubject(subj);

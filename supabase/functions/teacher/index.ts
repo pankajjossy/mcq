@@ -240,6 +240,9 @@ async function updateMcqSet(req: Request, id: string, teacherId: number) {
 
 // Fixes a typo'd subject/topic ONLY (semester/date/marks are not touched).
 // Title Case is enforced automatically by the system on every save.
+// After fixing this paper, also sweeps all other papers of the same teacher
+// whose subject case-insensitively matches the OLD subject, consolidating
+// variants like "python" and "Python" into the corrected canonical name.
 async function relabelSet(table: "mcq_sets" | "short_sets", req: Request, id: string, teacherId: number) {
   const body = await req.json().catch(() => ({}));
   const subject = initcap((body.subject || "").toString().trim());
@@ -247,40 +250,60 @@ async function relabelSet(table: "mcq_sets" | "short_sets", req: Request, id: st
   if (!subject || !topic) {
     return json({ error: "Subject and topic are required." }, 400);
   }
-  // Semester is intentionally NOT updated here — teachers can only fix text typos.
-  const result = await query(
-    `UPDATE ${table} SET subject=$1, topic=$2, title=$1 WHERE id=$3 AND teacher_id=$4 RETURNING id`,
+
+  // First, fetch the old subject so we know what to sweep.
+  const existing = await query(
+    `SELECT subject FROM ${table} WHERE id=$1 AND teacher_id=$2`,
+    [id, teacherId]
+  );
+  if (existing.rowCount === 0) return json({ error: "Paper not found." }, 404);
+  const oldSubjectLower = (existing.rows[0].subject || "").toLowerCase();
+
+  // Update the specific paper (topic + subject).
+  await query(
+    `UPDATE ${table} SET subject=$1, topic=$2, title=$1 WHERE id=$3 AND teacher_id=$4`,
     [subject, topic, id, teacherId]
   );
-  if (result.rowCount === 0) return json({ error: "Paper not found." }, 404);
+
+  // Sweep all other papers by this teacher that share the same old subject
+  // (case-insensitive) — merges "python", "Python", etc. into the corrected name.
+  const newSubjectLower = subject.toLowerCase();
+  for (const t of ["mcq_sets", "short_sets"] as const) {
+    await query(
+      `UPDATE ${t} SET subject=$1, title=$1
+       WHERE teacher_id=$2 AND LOWER(TRIM(subject)) IN ($3, $4) AND id != $5`,
+      [subject, teacherId, oldSubjectLower, newSubjectLower, id]
+    );
+  }
+
   return json({ ok: true });
 }
 
 // Renames a subject across ALL papers (mcq + short) for this teacher.
-// Uses case-insensitive matching so "python", "Python", "Pyhton" → "Python"
-// all merge into one subject in a single save. The newSubject value becomes
-// the canonical spelling used everywhere going forward.
+// "python", "Python", "Pyhton" → all merge into newSubject (Title Cased).
+// Uses a single pass: matches any row where LOWER(subject) equals either
+// the lower-cased old name OR the lower-cased new name, so all variants
+// (e.g. "python" and "Python") are swept in one query.
 async function renameSubject(req: Request, teacherId: number) {
   const body = await req.json().catch(() => ({}));
-  const newSubject = initcap((body.newSubject || "").toString().trim());
-  const oldSubject = initcap((body.oldSubject || "").toString().trim());
+  const newSubject = initcap((body.newSubject || "").toString().trim()); // Title Case enforced
+  const oldSubject = (body.oldSubject || "").toString().trim();          // keep original for matching
   if (!oldSubject || !newSubject) {
     return json({ error: "oldSubject and newSubject are required." }, 400);
   }
-  // Case-insensitive: also normalise all other case-variants of newSubject
-  // (e.g. "python", "PYTHON") into the canonical spelling the teacher typed.
-  await query(
-    `UPDATE mcq_sets SET subject=$1, title=$1
-     WHERE LOWER(subject) IN (LOWER($2::text), LOWER($1::text))
-     AND teacher_id=$3`,
-    [newSubject, oldSubject, teacherId]
-  );
-  await query(
-    `UPDATE short_sets SET subject=$1, title=$1
-     WHERE LOWER(subject) IN (LOWER($2::text), LOWER($1::text))
-     AND teacher_id=$3`,
-    [newSubject, oldSubject, teacherId]
-  );
+  const newLower = newSubject.toLowerCase();
+  const oldLower = oldSubject.toLowerCase();
+
+  // Sweep any row whose subject case-insensitively matches either the old
+  // label or the new label — this collapses "python" + "Python" + any other
+  // variant into one canonical Title-Cased name in a single query.
+  for (const table of ["mcq_sets", "short_sets"] as const) {
+    await query(
+      `UPDATE ${table} SET subject=$1, title=$1
+       WHERE teacher_id=$2 AND LOWER(TRIM(subject)) IN ($3, $4)`,
+      [newSubject, teacherId, oldLower, newLower]
+    );
+  }
   return json({ ok: true });
 }
 
