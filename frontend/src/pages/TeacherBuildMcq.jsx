@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../api.js";
 import { extractTextFromFile } from "../extractText.js";
+import { incrementApiCount } from "../utils/apiStats.js";
 
 const TYPE_LABELS = {
   mcq: "Multiple Choice",
@@ -84,6 +85,7 @@ export default function TeacherBuildMcq() {
         method: "POST",
         body: { text: textToSend, difficulty, typeCounts },
       });
+      incrementApiCount();
       setDraftQuestions(data.questions);
     } catch (err) {
       setError(err.message);
@@ -152,6 +154,7 @@ export default function TeacherBuildMcq() {
         method: "POST",
         body: { text: textToSend, count: shortCount, difficulty },
       });
+      incrementApiCount();
       setShortQuestions(data.questions.map((q) => ({ text: q.question, maxMarks: q.maxMarks })));
     } catch (err) {
       setError(err.message);
