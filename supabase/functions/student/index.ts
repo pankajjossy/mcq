@@ -47,7 +47,12 @@ Deno.serve(async (req: Request) => {
     if (req.method === "GET" && reviewMatch) return await review(pool, reviewMatch[1], user.id);
 
     const getMatch = path.match(/^\/mcq\/(\d+)$/);
+    const groupMatch = path.match(/^\/group\/([\w-]+)$/);
+    const groupSubmitMatch = path.match(/^\/group\/([\w-]+)\/submit$/);
     if (req.method === "GET" && getMatch) return await getPaper(pool, getMatch[1], user.id, url.searchParams.get("practice") === "true");
+
+    if (req.method === "GET" && groupMatch) return await getGroupPaper(pool, groupMatch[1], user.id);
+    if (req.method === "POST" && groupSubmitMatch) return await submitGroup(req, pool, groupSubmitMatch[1], user.id);
 
     if (req.method === "GET" && path === "/short/active") return await activeShortPapers(pool, user.id);
 
@@ -70,11 +75,11 @@ async function activePapers(pool: ReturnType<typeof getPool>, studentId: number)
   // Only this student's own semester shows up in the exam hall - a paper a
   // teacher made for Semester 3 never appears for a Semester 1 student.
   const today = await pool.query(
-    `SELECT ms.id, ms.subject, ms.topic, ms.semester, ms.title, ms.opened_at
+    `SELECT ms.id, ms.subject, ms.topic, ms.semester, ms.title, ms.opened_at, ms.group_id
      FROM mcq_sets ms
      JOIN students st ON st.id = $1
      WHERE ms.status = 'live'
-       AND ms.semester = st.semester
+       AND regexp_replace(ms.semester, '\\D', '', 'g') = regexp_replace(st.semester, '\\D', '', 'g')
        AND ms.opened_at > now() - interval '${EXAM_HALL_MINUTES} minutes'
        AND NOT EXISTS (
          SELECT 1 FROM attempts a WHERE a.mcq_set_id = ms.id AND a.student_id = $1
@@ -101,7 +106,7 @@ async function getPaper(pool: ReturnType<typeof getPool>, setId: string, student
     `SELECT ms.id, ms.subject, ms.topic, ms.semester, ms.title, ms.teacher_id
      FROM mcq_sets ms
      JOIN students st ON st.id = $2
-     WHERE ms.id=$1 AND ms.status='live' AND ms.semester = st.semester`,
+     WHERE ms.id=$1 AND ms.status='live' AND regexp_replace(ms.semester, '\\D', '', 'g') = regexp_replace(st.semester, '\\D', '', 'g')`,
     [setId, studentId]
   );
   if (setResult.rowCount === 0) {
@@ -134,6 +139,145 @@ async function getPaper(pool: ReturnType<typeof getPool>, setId: string, student
     [setId]
   );
   return json({ set: setResult.rows[0], questions: questions.rows });
+}
+
+// ---------- Combined group paper for students ----------
+async function getGroupPaper(pool: ReturnType<typeof getPool>, groupId: string, studentId: number) {
+  // Fetch the mcq and short set rows that belong to this group and are live
+  const mcqRes = await pool.query(
+    `SELECT ms.* FROM mcq_sets ms JOIN students st ON st.id = $2 WHERE ms.group_id = $1 AND ms.status = 'live' AND regexp_replace(ms.semester, '\\D', '', 'g') = regexp_replace(st.semester, '\\D', '', 'g') AND ms.opened_at > now() - interval '${EXAM_HALL_MINUTES} minutes'`,
+    [groupId, studentId]
+  );
+  const shortRes = await pool.query(
+    `SELECT ss.* FROM short_sets ss JOIN students st ON st.id = $2 WHERE ss.group_id = $1 AND ss.status = 'live' AND regexp_replace(ss.semester, '\\D', '', 'g') = regexp_replace(st.semester, '\\D', '', 'g') AND ss.opened_at > now() - interval '${EXAM_HALL_MINUTES} minutes'`,
+    [groupId, studentId]
+  );
+
+  const mcq = mcqRes.rows[0] || null;
+  const short = shortRes.rows[0] || null;
+  if (!mcq && !short) return json({ error: "This paper is not available right now." }, 404);
+
+  // Ensure student hasn't already attempted either half
+  if (mcq) {
+    const already = await pool.query("SELECT id FROM attempts WHERE mcq_set_id=$1 AND student_id=$2", [mcq.id, studentId]);
+    if ((already.rowCount ?? 0) > 0) return json({ error: "You've already attempted this paper." }, 409);
+  }
+  if (short) {
+    const already = await pool.query("SELECT id FROM short_attempts WHERE short_set_id=$1 AND student_id=$2", [short.id, studentId]);
+    if ((already.rowCount ?? 0) > 0) return json({ error: "You've already attempted this paper." }, 409);
+  }
+
+  const mcqQuestions = mcq
+    ? (await pool.query(
+        `SELECT id, question_text, option_a, option_b, option_c, option_d, question_type, marks,
+                CASE WHEN question_type = 'match' THEN
+                  (SELECT jsonb_agg(elem->'left') FROM jsonb_array_elements(match_pairs) elem)
+                ELSE NULL END AS match_left,
+                CASE WHEN question_type = 'match' THEN
+                  (SELECT jsonb_agg(elem->'right' ORDER BY random()) FROM jsonb_array_elements(match_pairs) elem)
+                ELSE NULL END AS match_right
+         FROM mcq_questions WHERE mcq_set_id=$1 ORDER BY position`,
+        [mcq.id]
+      )).rows
+    : [];
+
+  const shortQuestions = short
+    ? (await pool.query("SELECT id, question_text, max_marks, position FROM short_questions WHERE short_set_id=$1 ORDER BY position", [short.id])).rows
+    : [];
+
+  return json({ mcq: mcq ? { set: mcq, questions: mcqQuestions } : null, short: short ? { set: short, questions: shortQuestions } : null });
+}
+
+async function submitGroup(req: Request, pool: ReturnType<typeof getPool>, groupId: string, studentId: number) {
+  const body = await req.json().catch(() => ({}));
+  const mcqAnswers = Array.isArray(body.mcqAnswers) ? body.mcqAnswers : [];
+  const shortAnswers = Array.isArray(body.shortAnswers) ? body.shortAnswers : [];
+
+  // Find the owned sets for this group available to the student
+  const mcqRes = await pool.query("SELECT id FROM mcq_sets WHERE group_id=$1", [groupId]);
+  const shortRes = await pool.query("SELECT id FROM short_sets WHERE group_id=$1", [groupId]);
+  const mcqId = mcqRes.rows[0] ? mcqRes.rows[0].id : null;
+  const shortId = shortRes.rows[0] ? shortRes.rows[0].id : null;
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    // MCQ part
+    let mcqScore = 0;
+    let mcqTotal = 0;
+    if (mcqId && mcqAnswers.length > 0) {
+      const qRows = await client.query("SELECT id, correct_option, question_type, marks, match_pairs FROM mcq_questions WHERE mcq_set_id=$1", [mcqId]);
+      const byId = Object.fromEntries(qRows.rows.map((q: any) => [q.id, q]));
+      const graded = mcqAnswers.map((a: any) => {
+        const q = byId[a.questionId];
+        if (!q) return { ...a, isCorrect: false, awardedMarks: 0 };
+        mcqTotal += Number(q.marks);
+        let isCorrect = false;
+        if (q.question_type === "mcq" || q.question_type === "true_false") {
+          isCorrect = q.correct_option === a.selected;
+        } else if (q.question_type === "fill_blank") {
+          isCorrect = (a.selected || "").trim().toLowerCase() === (q.correct_option || "").trim().toLowerCase();
+        } else if (q.question_type === "match") {
+          const correctMap: Record<string, string> = Object.fromEntries((q.match_pairs || []).map((p: any) => [p.left, p.right]));
+          const given = a.matchAnswer || [];
+          isCorrect = given.length === (q.match_pairs || []).length && given.every((p: any) => correctMap[p.left] === p.right);
+        }
+        const awardedMarks = isCorrect ? Number(q.marks) : 0;
+        if (isCorrect) mcqScore += awardedMarks;
+        return { ...a, isCorrect, awardedMarks };
+      });
+
+      // Insert attempt
+      const attemptResult = await client.query("INSERT INTO attempts (mcq_set_id, student_id, score, total) VALUES ($1,$2,$3,$4) RETURNING id", [mcqId, studentId, mcqScore, mcqTotal]);
+      const attemptId = attemptResult.rows[0].id;
+      for (const g of graded) {
+        await client.query(
+          `INSERT INTO attempt_answers (attempt_id, question_id, selected_option, match_answer, is_correct, awarded_marks)
+           VALUES ($1,$2,$3,$4,$5,$6)`,
+          [attemptId, g.questionId, g.selected ?? null, g.matchAnswer ? JSON.stringify(g.matchAnswer) : null, g.isCorrect, g.awardedMarks]
+        );
+      }
+    }
+
+    // Short-answer part: photos need grading via Gemini
+    let shortScore = 0;
+    let shortTotal = 0;
+    if (shortId && shortAnswers.length > 0) {
+      const questions = await client.query("SELECT id, question_text, max_marks FROM short_questions WHERE short_set_id=$1", [shortId]);
+      const byId: Record<number, { question_text: string; max_marks: number }> = Object.fromEntries(
+        questions.rows.map((q: any) => [q.id, { question_text: q.question_text, max_marks: q.max_marks }])
+      );
+
+      const graded: Array<{ questionId: number; marks: number; feedback: string; maxMarks: number }> = [];
+      for (const a of shortAnswers) {
+        const q = byId[a.questionId];
+        if (!q) continue;
+        const result = await gradeShortAnswerPhoto(q.question_text, q.max_marks, a.photoBase64, a.mimeType || "image/jpeg");
+        graded.push({ questionId: a.questionId, marks: result.marks, feedback: result.feedback, maxMarks: q.max_marks });
+      }
+
+      shortScore = graded.reduce((s, g) => s + g.marks, 0);
+      shortTotal = graded.reduce((s, g) => s + g.maxMarks, 0);
+
+      const attemptResult = await client.query("INSERT INTO short_attempts (short_set_id, student_id, score, total) VALUES ($1,$2,$3,$4) RETURNING id", [shortId, studentId, shortScore, shortTotal]);
+      const attemptId = attemptResult.rows[0].id;
+      for (const g of graded) {
+        await client.query("INSERT INTO short_attempt_answers (attempt_id, question_id, awarded_marks, feedback) VALUES ($1,$2,$3,$4)", [attemptId, g.questionId, g.marks, g.feedback]);
+      }
+    }
+
+    await client.query("COMMIT");
+    return json({ mcq: { score: mcqScore, total: mcqTotal }, short: { score: shortScore, total: shortTotal } });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    if ((err as { code?: string }).code === "23505") {
+      return json({ error: "You've already attempted this paper." }, 409);
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function submit(req: Request, pool: ReturnType<typeof getPool>, setId: string, studentId: number) {
@@ -264,7 +408,7 @@ async function dashboard(pool: ReturnType<typeof getPool>, studentId: number) {
   );
 
   const history = await pool.query(
-    `SELECT ms.id AS mcq_set_id, ms.subject, a.score, a.total, a.submitted_at
+    `SELECT ms.id, ms.subject, ms.topic, ms.semester, ms.title, ms.teacher_id
      FROM attempts a JOIN mcq_sets ms ON ms.id = a.mcq_set_id
      WHERE a.student_id = $1
      ORDER BY a.submitted_at DESC`,
@@ -278,11 +422,11 @@ async function dashboard(pool: ReturnType<typeof getPool>, studentId: number) {
 
 async function activeShortPapers(pool: ReturnType<typeof getPool>, studentId: number) {
   const today = await pool.query(
-    `SELECT ss.id, ss.subject, ss.topic, ss.semester, ss.title, ss.opened_at
+    `SELECT ss.id, ss.subject, ss.topic, ss.semester, ss.title, ss.opened_at, ss.group_id
      FROM short_sets ss
      JOIN students st ON st.id = $1
      WHERE ss.status = 'live'
-       AND ss.semester = st.semester
+       AND regexp_replace(ss.semester, '\\D', '', 'g') = regexp_replace(st.semester, '\\D', '', 'g')
        AND ss.opened_at > now() - interval '${EXAM_HALL_MINUTES} minutes'
        AND NOT EXISTS (
          SELECT 1 FROM short_attempts a WHERE a.short_set_id = ss.id AND a.student_id = $1
@@ -307,7 +451,7 @@ async function getShortPaper(pool: ReturnType<typeof getPool>, setId: string, st
     `SELECT ss.id, ss.subject, ss.topic, ss.semester, ss.title
      FROM short_sets ss
      JOIN students st ON st.id = $2
-     WHERE ss.id=$1 AND ss.status='live' AND ss.semester = st.semester
+     WHERE ss.id=$1 AND ss.status='live' AND regexp_replace(ss.semester, '\\D', '', 'g') = regexp_replace(st.semester, '\\D', '', 'g')
        AND ss.opened_at > now() - interval '${EXAM_HALL_MINUTES} minutes'`,
     [setId, studentId]
   );

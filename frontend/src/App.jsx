@@ -7,6 +7,7 @@ import LiveResults from "./pages/LiveResults.jsx";
 import StudentDashboard from "./pages/StudentDashboard.jsx";
 import TakeTest from "./pages/TakeTest.jsx";
 import TakeShortTest from "./pages/TakeShortTest.jsx";
+import TakeGroupTest from "./pages/TakeGroupTest.jsx";
 import Wall from "./pages/Wall.jsx";
 import Admin from "./pages/Admin.jsx";
 import PrincipalDashboard from "./pages/PrincipalDashboard.jsx";
@@ -29,6 +30,7 @@ export default function App() {
         <Route path="/student" element={<StudentDashboard />} />
         <Route path="/student/test/:id" element={<TakeTest />} />
         <Route path="/student/short/:id" element={<TakeShortTest />} />
+        <Route path="/student/group/:groupId" element={<TakeGroupTest />} />
         <Route path="/wall/:teacherId" element={<Wall />} />
       </Routes>
       <ApiStatsFooter />

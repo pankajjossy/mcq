@@ -7,7 +7,7 @@ function getToken() {
   return localStorage.getItem("token");
 }
 
-import { incrementApiCount } from "../utils/apiStats.js";
+import { incrementApiCount } from "./utils/apiStats.js";
 
 // path looks like "/auth/teacher/login" or "/student/mcq/active" - the
 // first segment is the Edge Function name, the rest is routed inside it.

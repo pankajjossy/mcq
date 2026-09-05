@@ -4,6 +4,7 @@ import { api, getSession, clearSession } from "../api.js";
 import Collapsible from "../components/Collapsible.jsx";
 import PaperReview from "../components/PaperReview.jsx";
 import { toTitleCase, formatShort, paperLabel } from "../format.js";
+import CompactAttendance from "../components/CompactAttendance.jsx";
 
 export default function TeacherDashboard() {
   const session = getSession();
@@ -13,6 +14,8 @@ export default function TeacherDashboard() {
   const [error, setError] = useState("");
   // Three top-level buttons; the screen area below swaps between them.
   const [mainTab, setMainTab] = useState("mcq");
+  const [attendanceSem, setAttendanceSem] = useState("1");
+  const [showAttendance, setShowAttendance] = useState(false);
 
   useEffect(() => {
     if (!session || session.role !== "teacher") return navigate("/");
@@ -119,6 +122,7 @@ export default function TeacherDashboard() {
         <button className={mainTab === "mcq" ? "active" : ""} onClick={() => setMainTab("mcq")}>MCQ</button>
         <button className={mainTab === "subject" ? "active" : ""} onClick={() => setMainTab("subject")}>Subject Performance</button>
         <button className={mainTab === "overall" ? "active" : ""} onClick={() => setMainTab("overall")}>Overall Performance</button>
+        <button className={mainTab === "attendance" ? "active" : ""} onClick={() => setMainTab("attendance")}>Attendance</button>
       </div>
 
       {mainTab === "mcq" && (
@@ -138,6 +142,17 @@ export default function TeacherDashboard() {
 
       {mainTab === "subject" && <SubjectPerformance />}
       {mainTab === "overall" && <OverallPerformance />}
+      {mainTab === "attendance" && (
+        <div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
+            <label style={{ margin: 0 }}>Semester</label>
+            <select value={attendanceSem} onChange={(e) => setAttendanceSem(e.target.value)}>
+              {["1","2","3","4","5","6","7","8"].map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <CompactAttendance role="teacher" sem={attendanceSem} />
+        </div>
+      )}
     </div>
   );
 }

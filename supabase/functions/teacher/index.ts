@@ -50,6 +50,13 @@ function initcap(s: string): string {
   return s.replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+// Normalizes semester values: extracts the first numeric sequence (e.g. "Sem 3" -> "3").
+function normalizeSemester(v: unknown): string {
+  const s = (v || "").toString().trim();
+  const m = s.match(/(\d+)/);
+  return m ? m[1] : s;
+}
+
 interface DraftQuestionIn {
   type: "mcq" | "true_false" | "fill_blank" | "match";
   question: string;
@@ -116,6 +123,7 @@ Deno.serve(async (req: Request) => {
     if (req.method === "PATCH" && path === "/rename-subject") return await renameSubject(req, user.id);
 
     if (req.method === "POST" && path === "/paper/save") return await saveComboPaper(req, user.id);
+    if (req.method === "GET" && path === "/attendance") return await teacherAttendance(url, user.id);
     if (groupIdMatch) {
       const [, groupId] = groupIdMatch;
       if (req.method === "GET") return await getGroup(groupId, user.id);
@@ -153,6 +161,46 @@ async function generate(req: Request) {
   } catch (err) {
     return json({ error: (err as Error).message || "Could not generate questions." }, 500);
   }
+}
+
+async function teacherAttendance(url: URL, teacherId: number) {
+  let sem = url.searchParams.get("sem");
+  if (!sem) return json({ error: "sem required." }, 400);
+  sem = normalizeSemester(sem);
+
+  // Find teacher's department
+  const t = await query("SELECT department FROM teachers WHERE id=$1", [teacherId]);
+  const dept = t.rows[0]?.department || "";
+
+  // Reuse similar logic to principal: today's papers for dept+sem
+  const papers = await query(
+    `SELECT ms.id, 'mcq' AS kind, ms.teacher_id, t.name AS teacher_name, ms.opened_at
+     FROM mcq_sets ms JOIN teachers t ON t.id = ms.teacher_id
+     WHERE t.department = $1 AND regexp_replace(ms.semester, '\\D', '', 'g') = $2 AND ms.status IN ('live','closed')
+       AND (timezone('Asia/Kolkata', ms.opened_at))::date = (timezone('Asia/Kolkata', now()))::date
+     UNION ALL
+     SELECT ss.id, 'short' AS kind, ss.teacher_id, t.name AS teacher_name, ss.opened_at
+     FROM short_sets ss JOIN teachers t ON t.id = ss.teacher_id
+     WHERE t.department = $1 AND regexp_replace(ss.semester, '\\D', '', 'g') = $2 AND ss.status IN ('live','closed')
+       AND (timezone('Asia/Kolkata', ss.opened_at))::date = (timezone('Asia/Kolkata', now()))::date
+     ORDER BY opened_at`,
+    [dept, sem]
+  );
+
+  const students = await query("SELECT id, rollno, name FROM students WHERE department=$1 AND semester=$2 ORDER BY rollno", [dept, sem]);
+
+  const attendanceMap: Record<string, number[]> = {};
+  for (const p of papers.rows) {
+    if (p.kind === 'mcq') {
+      const a = await query(`SELECT s.id FROM attempts a JOIN students s ON s.id = a.student_id WHERE a.mcq_set_id=$1`, [p.id]);
+      attendanceMap[`mcq-${p.id}`] = a.rows.map((r: any) => r.id);
+    } else {
+      const a = await query(`SELECT s.id FROM short_attempts a JOIN students s ON s.id = a.student_id WHERE a.short_set_id=$1`, [p.id]);
+      attendanceMap[`short-${p.id}`] = a.rows.map((r: any) => r.id);
+    }
+  }
+
+  return json({ papers: papers.rows, students: students.rows, attendance: attendanceMap });
 }
 
 async function insertQuestions(setId: number, questions: DraftQuestionIn[]) {
@@ -200,7 +248,7 @@ async function saveMcq(req: Request, teacherId: number) {
   const raw = body as { subject?: string; topic?: string; semester?: string; questions?: unknown };
   const subject = initcap((raw.subject || "").toString().trim());
   const topic   = initcap((raw.topic   || "").toString().trim());
-  const semester = (raw.semester || "").toString().trim();
+  const semester = normalizeSemester(raw.semester);
   if (!subject || !topic || !semester || !validateQuestions(raw.questions)) {
     return json({ error: "Subject, topic, semester and at least one valid question are required." }, 400);
   }
@@ -247,7 +295,7 @@ async function updateMcqSet(req: Request, id: string, teacherId: number) {
   const raw = body as { subject?: string; topic?: string; semester?: string; questions?: unknown };
   const subject = initcap((raw.subject || "").toString().trim());
   const topic   = initcap((raw.topic   || "").toString().trim());
-  const semester = (raw.semester || "").toString().trim();
+  const semester = normalizeSemester(raw.semester);
   if (!subject || !topic || !semester || !validateQuestions(raw.questions)) {
     return json({ error: "Subject, topic, semester and at least one valid question are required." }, 400);
   }
@@ -426,7 +474,7 @@ async function saveShort(req: Request, teacherId: number) {
   const raw = body as { subject?: string; topic?: string; semester?: string; questions?: Array<{ text: string; maxMarks: number }> };
   const subject  = initcap((raw.subject  || "").toString().trim());
   const topic    = initcap((raw.topic    || "").toString().trim());
-  const semester = (raw.semester || "").toString().trim();
+  const semester = normalizeSemester(raw.semester);
   if (!subject || !topic || !semester || !Array.isArray(raw.questions) || raw.questions.length === 0) {
     return json({ error: "Subject, topic, semester and at least one question are required." }, 400);
   }
@@ -539,7 +587,7 @@ async function saveComboPaper(req: Request, teacherId: number) {
   };
   const subject = initcap((raw.subject || "").toString().trim());
   const topic = initcap((raw.topic || "").toString().trim());
-  const semester = (raw.semester || "").toString().trim();
+  const semester = normalizeSemester(raw.semester);
   if (!subject || !topic || !semester) {
     return json({ error: "Subject, topic and semester are required." }, 400);
   }

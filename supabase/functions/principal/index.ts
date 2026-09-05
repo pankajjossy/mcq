@@ -21,6 +21,7 @@ Deno.serve(async (req: Request) => {
   try {
     if (req.method === "GET" && path === "/departments") return await getDepartments();
     if (req.method === "GET" && path === "/teachers") return await getTeachers(url);
+    if (req.method === "GET" && path === "/attendance") return await getAttendance(url);
     if (req.method === "GET" && path === "/students") return await getStudents(url);
     return json({ error: "Not found." }, 404);
   } catch (err) {
@@ -42,6 +43,44 @@ async function getDepartments() {
   });
 }
 
+async function getAttendance(url: URL) {
+  const dept = url.searchParams.get("dept");
+  const sem = url.searchParams.get("sem");
+  if (!dept || !sem) return json({ error: "dept and sem required." }, 400);
+  const semNorm = (sem.match(/(\d+)/) || [sem])[0];
+
+  // Papers (MCQ + short) published today in this department and semester
+  const papers = await query(
+    `SELECT ms.id, 'mcq' AS kind, ms.teacher_id, t.name AS teacher_name, ms.opened_at
+     FROM mcq_sets ms JOIN teachers t ON t.id = ms.teacher_id
+     WHERE t.department = $1 AND regexp_replace(ms.semester, '\\D', '', 'g') = $2 AND ms.status IN ('live','closed')
+       AND (timezone('Asia/Kolkata', ms.opened_at))::date = (timezone('Asia/Kolkata', now()))::date
+     UNION ALL
+     SELECT ss.id, 'short' AS kind, ss.teacher_id, t.name AS teacher_name, ss.opened_at
+     FROM short_sets ss JOIN teachers t ON t.id = ss.teacher_id
+     WHERE t.department = $1 AND regexp_replace(ss.semester, '\\D', '', 'g') = $2 AND ss.status IN ('live','closed')
+       AND (timezone('Asia/Kolkata', ss.opened_at))::date = (timezone('Asia/Kolkata', now()))::date
+     ORDER BY opened_at`,
+    [dept, semNorm]
+  );
+
+  // Students in this dept+sem
+  const students = await query("SELECT id, rollno, name FROM students WHERE department=$1 AND regexp_replace(semester, '\\D', '', 'g') = $2 ORDER BY rollno", [dept, semNorm]);
+
+  const attendanceMap: Record<string, number[]> = {};
+  for (const p of papers.rows) {
+    if (p.kind === 'mcq') {
+      const a = await query(`SELECT s.id FROM attempts a JOIN students s ON s.id = a.student_id WHERE a.mcq_set_id=$1`, [p.id]);
+      attendanceMap[`mcq-${p.id}`] = a.rows.map((r: any) => r.id);
+    } else {
+      const a = await query(`SELECT s.id FROM short_attempts a JOIN students s ON s.id = a.student_id WHERE a.short_set_id=$1`, [p.id]);
+      attendanceMap[`short-${p.id}`] = a.rows.map((r: any) => r.id);
+    }
+  }
+
+  return json({ papers: papers.rows, students: students.rows, attendance: attendanceMap });
+}
+
 async function getTeachers(url: URL) {
   const dept = url.searchParams.get("dept");
   if (!dept) return json({ error: "dept required." }, 400);
@@ -56,8 +95,8 @@ async function getTeachers(url: URL) {
   for (const t of teachers.rows) {
     // Each MCQ set published: subject (topic), opened_at
     const papers = await query(
-      `SELECT subject, topic, semester, opened_at::date AS date, 
-              TO_CHAR(opened_at, 'HH12:MI AM') AS time_str
+      `SELECT subject, topic, semester, opened_at::date AS date,
+              TO_CHAR(timezone('Asia/Kolkata', opened_at), 'FMHH12:MI AM') AS time_str
        FROM mcq_sets
        WHERE teacher_id = $1 AND status IN ('live','closed')
        ORDER BY opened_at`,
@@ -89,8 +128,8 @@ async function getStudents(url: URL) {
     const offered = await query(
       `SELECT COUNT(*) AS cnt FROM mcq_sets ms
        JOIN teachers t ON t.id = ms.teacher_id
-       WHERE t.department = $1 AND ms.semester = $2 AND ms.status = 'closed'`,
-      [dept, sem]
+       WHERE t.department = $1 AND regexp_replace(ms.semester, '\\D', '', 'g') = $2 AND ms.status = 'closed'`,
+      [dept, semNorm]
     );
     const appeared = await query(
       `SELECT COUNT(*) AS cnt FROM attempts a

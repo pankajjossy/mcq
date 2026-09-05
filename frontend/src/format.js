@@ -1,29 +1,37 @@
-// Small display-only formatting helpers. Never mutate stored data - these
-// only affect how something is shown.
+// Small formatting helpers used across the frontend.
 
-// "priya sharma" -> "Priya Sharma" - applied wherever a teacher/student
-// name is displayed, regardless of how they typed it at registration.
-export function toTitleCase(str) {
-  if (!str) return str;
-  return str
-    .toString()
-    .toLowerCase()
-    .replace(/(^|[\s'-])([a-z])/g, (_, sep, letter) => sep + letter.toUpperCase());
+export function toTitleCase(s) {
+  if (!s) return "";
+  return s.toString().replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-// "1-8/12:45" style - day-month (no leading zero on the day) / 24h time.
-export function formatShort(dateStr) {
-  if (!dateStr) return "";
-  const d = new Date(dateStr);
-  if (Number.isNaN(d.getTime())) return "";
-  const day = d.getDate();
-  const month = d.getMonth() + 1;
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  return `${day}-${month}/${hh}:${mm}`;
-}
-
-// "Python" + "List" -> "Python - List", used everywhere a paper is listed.
 export function paperLabel(subject, topic) {
-  return topic ? `${subject} - ${topic}` : subject;
+  const sub = subject ? toTitleCase(subject) : "";
+  const top = topic ? ` · ${toTitleCase(topic)}` : "";
+  return `${sub}${top}`.trim();
+}
+
+export function formatShort(utcDateString) {
+  if (!utcDateString) return "";
+  try {
+    const d = new Date(utcDateString);
+    const opts = { timeZone: "Asia/Kolkata" };
+    const day = d.toLocaleString("en-IN", { day: "numeric", ...opts });
+    const month = d.toLocaleString("en-IN", { month: "numeric", ...opts });
+    const time = d.toLocaleString("en-IN", { hour: "numeric", minute: "2-digit", hour12: true, ...opts });
+    // remove am/pm text for shorter header but keep hour:minute
+    return `${day}-${month}: ${time.replace(/\s?AM|\s?PM|\s?am|\s?pm/g, "")}`;
+  } catch (e) {
+    return "";
+  }
+}
+
+export function formatTo12HourIST(utcDateString) {
+  if (!utcDateString) return "";
+  return new Intl.DateTimeFormat("en-IN", {
+    timeZone: "Asia/Kolkata",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(new Date(utcDateString));
 }

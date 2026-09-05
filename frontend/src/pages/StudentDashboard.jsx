@@ -3,12 +3,10 @@ import { useNavigate, Link } from "react-router-dom";
 import { api, getSession, clearSession } from "../api.js";
 import Collapsible from "../components/Collapsible.jsx";
 import PaperReview from "../components/PaperReview.jsx";
-import { toTitleCase, paperLabel } from "../format.js";
+import { toTitleCase, paperLabel, formatShort } from "../format.js";
 
 function formatWhen(dateStr) {
-  const d = new Date(dateStr);
-  return d.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "2-digit" }) +
-    " " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  return formatShort(dateStr);
 }
 
 export default function StudentDashboard() {
@@ -58,24 +56,65 @@ export default function StudentDashboard() {
       {today.length === 0 && shortToday.length === 0 && (
         <p className="muted">No paper has been uploaded yet, or the 30-minute window has passed. Wait for your teacher to announce one.</p>
       )}
-      {today.map((t) => (
-        <div className="ticket" key={`mcq-${t.id}`}>
-          <div>
-            <div className="subject">{t.semester} · {paperLabel(t.subject, t.topic)}</div>
-            <div className="meta">{formatWhen(t.opened_at)}</div>
-          </div>
-          <Link className="btn" to={`/student/test/${t.id}`}>Appear</Link>
-        </div>
-      ))}
-      {shortToday.map((t) => (
-        <div className="ticket" key={`short-${t.id}`}>
-          <div>
-            <div className="subject">{t.semester} · {paperLabel(t.subject, t.topic)} <span className="muted">(short answer)</span></div>
-            <div className="meta">{formatWhen(t.opened_at)}</div>
-          </div>
-          <Link className="btn" to={`/student/short/${t.id}`}>Appear</Link>
-        </div>
-      ))}
+      {(() => {
+        // Combine MCQ and shortToday by group_id when both halves exist
+        const groupMap = new Map();
+        for (const m of today) {
+          if (m.group_id) {
+            groupMap.set(m.group_id, { mcq: m });
+          }
+        }
+        for (const s of shortToday) {
+          if (s.group_id) {
+            const cur = groupMap.get(s.group_id) || {}; cur.short = s; groupMap.set(s.group_id, cur);
+          }
+        }
+
+        const rendered = [];
+
+        // Render combined group tickets first
+        for (const [groupId, parts] of groupMap.entries()) {
+          if (parts.mcq && parts.short) {
+            rendered.push(
+              <div className="ticket" key={`group-${groupId}`}>
+                <div>
+                  <div className="subject">{parts.mcq.semester} · {paperLabel(parts.mcq.subject, parts.mcq.topic)} <span className="muted">(MCQ + short)</span></div>
+                  <div className="meta">{formatWhen(parts.mcq.opened_at || parts.short.opened_at)}</div>
+                </div>
+                <Link className="btn" to={`/student/group/${groupId}`}>Appear</Link>
+              </div>
+            );
+          }
+        }
+
+        // Render solo MCQ papers (without group_id)
+        for (const t of today.filter((x) => !x.group_id)) {
+          rendered.push(
+            <div className="ticket" key={`mcq-${t.id}`}>
+              <div>
+                <div className="subject">{t.semester} · {paperLabel(t.subject, t.topic)}</div>
+                <div className="meta">{formatWhen(t.opened_at)}</div>
+              </div>
+              <Link className="btn" to={`/student/test/${t.id}`}>Appear</Link>
+            </div>
+          );
+        }
+
+        // Render solo short papers (without group_id)
+        for (const t of shortToday.filter((x) => !x.group_id)) {
+          rendered.push(
+            <div className="ticket" key={`short-${t.id}`}>
+              <div>
+                <div className="subject">{t.semester} · {paperLabel(t.subject, t.topic)} <span className="muted">(short answer)</span></div>
+                <div className="meta">{formatWhen(t.opened_at)}</div>
+              </div>
+              <Link className="btn" to={`/student/short/${t.id}`}>Appear</Link>
+            </div>
+          );
+        }
+
+        return rendered;
+      })()}
 
       <div className="tabs">
         <button className={tab === "subjectwise" ? "active" : ""} onClick={() => setTab("subjectwise")}>Subject-wise performance</button>

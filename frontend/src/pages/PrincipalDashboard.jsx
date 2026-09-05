@@ -11,6 +11,7 @@ export default function PrincipalDashboard() {
   const [selectedDept, setSelectedDept] = useState("");
   const [semesters, setSemesters] = useState(["1", "2", "3", "4", "5", "6", "7", "8"]);
   const [selectedSem, setSelectedSem] = useState("1");
+  const [attendanceMode, setAttendanceMode] = useState("byTeacher"); // byTeacher | compact
   const [teachers, setTeachers] = useState([]);
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -111,7 +112,12 @@ export default function PrincipalDashboard() {
         <div>
           {teachers.length === 0 && <p className="muted">No teachers found in this department.</p>}
           {teachers.length > 0 && (
-            <div className="card" style={{ padding: "16px", overflowX: "auto" }}>
+            <div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                <button className={attendanceMode === "byTeacher" ? "active" : ""} onClick={() => setAttendanceMode("byTeacher")}>By teacher</button>
+                <button className={attendanceMode === "compact" ? "active" : ""} onClick={() => setAttendanceMode("compact")}>Compact matrix</button>
+              </div>
+              <div className="card" style={{ padding: "16px", overflowX: "auto" }}>
               {(() => {
                 const allDates = new Set();
                 teachers.forEach(t => t.papers.forEach(p => {
@@ -125,7 +131,8 @@ export default function PrincipalDashboard() {
                 });
 
                 return (
-                  <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
+                  attendanceMode === "byTeacher" ? (
+                    <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
                     <thead>
                       <tr>
                         <th style={{ textAlign: "left", padding: "8px 12px", borderBottom: "2px solid rgba(255,255,255,0.1)", color: "var(--paper-ink)", textTransform: "uppercase", fontSize: 13, letterSpacing: 1 }}>NAME</th>
@@ -148,8 +155,8 @@ export default function PrincipalDashboard() {
                             {dateColumns.map(d => (
                               <td key={d} style={{ padding: "12px", verticalAlign: "top" }}>
                                 {(paperMap[d] || []).map((p, i) => {
-                                  // Time string formatting
-                                  const timeFormat = p.time_str ? p.time_str.replace(" AM", "").replace(" PM", "") : "N/A";
+                                  // Time string formatting: remove spaces and lower-case AM/PM
+                                  const timeFormat = p.time_str ? p.time_str.replace(/\s+/g, '').toLowerCase() : "N/A";
                                   return (
                                     <div key={i} style={{ marginBottom: 6, fontSize: 14, fontFamily: "monospace" }}>
                                       {p.semester}-{toTitleCase(p.subject)}({timeFormat})
@@ -162,9 +169,13 @@ export default function PrincipalDashboard() {
                         );
                       })}
                     </tbody>
-                  </table>
+                    </table>
+                  ) : (
+                    <CompactAttendance dept={selectedDept} sem={selectedSem} />
+                  )
                 );
               })()}
+              </div>
             </div>
           )}
         </div>

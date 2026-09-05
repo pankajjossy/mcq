@@ -1,0 +1,36 @@
+name: Deploy Supabase Edge Functions
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'supabase/functions/**'
+
+jobs:
+  deploy-functions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install supabase CLI
+        run: npm install -g supabase
+
+      - name: Deploy Edge Functions
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+        run: |
+          cd supabase/functions
+          # deploy all functions in this folder
+          supabase login --no-local-cli --token $SUPABASE_ACCESS_TOKEN || true
+          for f in * ; do
+            if [ -d "$f" ]; then
+              echo "Deploying function: $f"
+              supabase functions deploy $f --project-ref $SUPABASE_PROJECT_REF --no-verify || true
+            fi
+          done

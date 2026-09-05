@@ -15,20 +15,14 @@ card required, anywhere in the stack.**
 
 ## How it works
 
-- **Teachers** register with name + login name + password. **Students** register
-  with name + semester + roll number + password.
 - On the **Build a paper** page: teacher enters subject + semester, picks a
   difficulty (easy/medium/hard) and mixes question types (e.g. 2 multiple
   choice + 2 fill-in-the-blank + 1 true/false) with a count for each, then
   pastes text or uploads a `.txt`/`.docx`/`.pdf` (extracted to plain text
   right in the browser). Gemini drafts the questions; the teacher reviews,
   edits, and can raise/lower marks per question (default 1) - the total is
-  whatever those add up to when they press **Done**.
-- Saved papers sit collapsed in the teacher's dashboard (Upload / View / Edit /
   Delete, one confirm on delete). At class time, teacher clicks **Upload** -
   it appears on every student's landing page, labelled e.g. "Sem3 Physics 31
-  Aug 26 12:45," newest first.
-- The paper stays in the student's "exam hall" for **40 minutes** after
   upload, then drops off that list into the collapsed dashboard archive
   (whether or not a given student took it).
 - Student clicks a paper, answers, clicks **Done** -> graded instantly
