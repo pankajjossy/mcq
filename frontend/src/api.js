@@ -7,19 +7,19 @@ function getToken() {
   return localStorage.getItem("token");
 }
 
+import { incrementApiCount } from "../utils/apiStats.js";
+
 // path looks like "/auth/teacher/login" or "/student/mcq/active" - the
 // first segment is the Edge Function name, the rest is routed inside it.
 export async function api(path, { method = "GET", body } = {}) {
   const headers = {
     "Content-Type": "application/json",
-    // Supabase's function gateway wants the anon key on every call (it's
-    // safe to expose - it's the public client key, not a secret). Our own
-    // login system is separate: the app's JWT below is what each function
-    // actually checks for authorization.
     apikey: ANON_KEY
   };
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
+
+  incrementApiCount();
 
   const resp = await fetch(`${FUNCTIONS_URL}${path}`, {
     method,

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import Collapsible from "../components/Collapsible.jsx";
+import { incrementApiCount } from "../utils/apiStats.js";
 
 const FUNCTIONS_URL = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL;
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -9,6 +10,9 @@ async function adminApi(path, { method = "GET", body } = {}) {
   const headers = { "Content-Type": "application/json", apikey: ANON_KEY };
   const token = localStorage.getItem("admin_token");
   if (token) headers.Authorization = `Bearer ${token}`;
+
+  incrementApiCount();
+
   const resp = await fetch(`${FUNCTIONS_URL}/admin${path}`, {
     method,
     headers,

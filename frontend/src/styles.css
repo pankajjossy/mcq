@@ -421,3 +421,21 @@ table.scoreboard tr.winner-row { background: rgba(193, 163, 90, 0.2); font-weigh
 .att-good { color: var(--good); }
 .att-warn { color: #b07820; }
 .att-low  { color: var(--danger); }
+
+.api-stats-footer {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(43, 58, 48, 0.95);
+  color: var(--chalk);
+  font-family: var(--mono);
+  font-size: 13px;
+  text-align: center;
+  padding: 8px 12px;
+  border-top: 1px solid var(--board-line);
+  z-index: 100;
+}
+.app-shell {
+  padding-bottom: 40px;
+}
