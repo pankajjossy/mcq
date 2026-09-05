@@ -2,6 +2,7 @@ import { Routes, Route } from "react-router-dom";
 import Login from "./pages/Login.jsx";
 import TeacherDashboard from "./pages/TeacherDashboard.jsx";
 import TeacherBuildMcq from "./pages/TeacherBuildMcq.jsx";
+import TeacherBuildGroup from "./pages/TeacherBuildGroup.jsx";
 import TeacherBuildShort from "./pages/TeacherBuildShort.jsx";
 import LiveResults from "./pages/LiveResults.jsx";
 import StudentDashboard from "./pages/StudentDashboard.jsx";
@@ -23,6 +24,7 @@ export default function App() {
         <Route path="/teacher" element={<TeacherDashboard />} />
         <Route path="/teacher/build" element={<TeacherBuildMcq />} />
         <Route path="/teacher/build/:id" element={<TeacherBuildMcq />} />
+          <Route path="/teacher/build-group/:groupId" element={<TeacherBuildGroup />} />
         <Route path="/teacher/build-short" element={<TeacherBuildShort />} />
         <Route path="/teacher/build-short/:id" element={<TeacherBuildShort />} />
         <Route path="/teacher/live/:id" element={<LiveResults kind="mcq" />} />

@@ -179,7 +179,7 @@ function McqRow({ set: s, onUpload, onDelete, navigate }) {
       {mode === "view" && (
         <>
           <div className="actions">
-            {s.status === "ready" && (
+            {s.status === "ready" && !s.group_id && (
               <>
                 <button className="action-btn" onClick={upload}>Upload</button>
                 <button className="action-btn secondary" onClick={togglePaper}>{paper ? "Hide MCQ" : "View MCQ"}</button>
@@ -198,8 +198,12 @@ function McqRow({ set: s, onUpload, onDelete, navigate }) {
                 <button className="action-btn secondary" onClick={togglePaper}>{paper ? "Hide MCQ" : "View MCQ"}</button>
               </>
             )}
-            {/* Edit MCQ always visible regardless of status */}
-            <button className="action-btn secondary" onClick={() => setMode("edit")}>Edit MCQ</button>
+            {/* Edit MCQ always visible regardless of status; if part of a group, point teacher to the single group editor */}
+            {!s.group_id ? (
+              <button className="action-btn secondary" onClick={() => setMode("edit")}>Edit MCQ</button>
+            ) : (
+              <button className="action-btn secondary" onClick={() => navigate(`/teacher/build-group/${s.group_id}`)}>Edit Paper</button>
+            )}
             <button className="action-btn danger" onClick={() => onDelete(s.id)}>Delete</button>
           </div>
           {paper && (
@@ -336,7 +340,7 @@ function ShortRow({ set: s, onUpload, onDelete, navigate }) {
       ) : (
         <>
           <div className="actions">
-            {s.status === "ready" && (
+            {s.status === "ready" && !s.group_id && (
               <>
                 <button onClick={upload}>Upload</button>
                 <button className="secondary" onClick={view}>{paper ? "Hide" : "View Questions"}</button>
@@ -357,7 +361,12 @@ function ShortRow({ set: s, onUpload, onDelete, navigate }) {
                 <button className="secondary" onClick={() => navigate(`/teacher/build-short/${s.id}`)}>Edit Questions</button>
               </>
             )}
-            <button className="secondary" onClick={() => setEditingLabel(true)}>Edit Subject/Topic</button>
+            {/* If short set is part of a group, direct to single editor */}
+            {!s.group_id ? (
+              <button className="secondary" onClick={() => setEditingLabel(true)}>Edit Subject/Topic</button>
+            ) : (
+              <button className="secondary" onClick={() => navigate(`/teacher/build-group/${s.group_id}`)}>Edit Paper</button>
+            )}
             <button className="danger" onClick={() => onDelete(s.id)}>Delete</button>
           </div>
           {paper && (
