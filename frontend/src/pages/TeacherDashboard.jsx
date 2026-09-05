@@ -441,8 +441,7 @@ function ComboRow({ paper: p, onUpload, onDelete, navigate }) {
               <>
                 <button onClick={upload}>Upload</button>
                 <button className="secondary" onClick={viewPaper}>{detail ? "Hide" : "View Paper"}</button>
-                {p.mcq && <button className="secondary" onClick={() => navigate(`/teacher/build/${p.mcq.id}`)}>Edit MCQ</button>}
-                {p.short && <button className="secondary" onClick={() => navigate(`/teacher/build-short/${p.short.id}`)}>Edit Short-Answer</button>}
+                <button className="secondary" onClick={() => navigate(`/teacher/build-group/${p.groupId}`)}>Edit Paper</button>
               </>
             )}
             {p.status === "live" && (
