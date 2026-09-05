@@ -1,0 +1,710 @@
+// Edge Function: teacher
+// All routes require a teacher JWT (Authorization: Bearer <token>).
+// Routes, matched by path after /functions/v1/teacher:
+//   MCQ-family papers (mcq / true_false / fill_blank / match, mixable in one paper)
+//   POST   /mcq/generate     { text, difficulty, typeCounts }      -> { questions }
+//   POST   /mcq/save         { subject, topic, semester, questions } -> { id }
+//   GET    /mcq                                                    -> { sets }
+//   GET    /mcq/:id                                                -> { set, questions }
+//   PUT    /mcq/:id          { subject, topic, semester, questions } -> { ok }   ('ready' only)
+//   DELETE /mcq/:id                                                -> { ok }
+//   POST   /mcq/:id/upload                                         -> { ok }
+//   POST   /mcq/:id/close                                          -> { ok }
+//   GET    /mcq/:id/results                                        -> { results }
+//   PATCH  /mcq/:id/label     { subject, topic, semester }         -> { ok }   (any status - fixes typos)
+//   GET    /scores/detailed                                        -> { attempts }  (one row per student per test)
+//
+//   Short-answer papers (photo upload, AI-graded) - also reachable as a
+//   choice from the same "New Paper" screen as the MCQ-family types above.
+//   Questions can be typed by the teacher, or generated with Gemini from
+//   pasted/uploaded source text (the teacher picks which, per paper).
+//   POST   /short/generate   { text, count, difficulty }             -> { questions }
+//   POST   /short/save       { subject, topic, semester, questions } -> { id }
+//   GET    /short                                                  -> { sets }
+//   GET    /short/:id                                              -> { set, questions }
+//   PUT    /short/:id        { subject, topic, semester, questions } -> { ok }
+//   DELETE /short/:id                                              -> { ok }
+//   POST   /short/:id/upload                                       -> { ok }
+//   POST   /short/:id/close                                        -> { ok }
+//   GET    /short/:id/results                                      -> { results }
+//   PATCH  /short/:id/label   { subject, topic, semester }         -> { ok }   (any status - fixes typos)
+//
+//   Combined papers (MCQ-family + short-answer questions saved together as
+//   ONE paper - two DB rows under the hood sharing a group_id, since MCQ
+//   and short-answer grade completely differently, but one thing to manage).
+//   POST   /paper/save        { subject, topic, semester, questions?, shortQuestions? } -> { groupId, mcqId, shortId }
+//   GET    /group/:groupId                                         -> { mcq, short }
+//   POST   /group/:groupId/upload                                  -> { ok }
+//   POST   /group/:groupId/close                                   -> { ok }
+//   DELETE /group/:groupId                                         -> { ok }
+//   PATCH  /group/:groupId/label { subject, topic }                -> { ok }
+//   GET    /group/:groupId/results                                 -> { results }  (mcq + short score merged per student)
+
+import { query } from "../_shared/db.ts";
+import { requireAuth } from "../_shared/jwt.ts";
+import { corsHeaders, handlePreflight, json } from "../_shared/cors.ts";
+import { generateQuestionsFromText, generateShortAnswerQuestions, type TypeCounts } from "../_shared/gemini.ts";
+
+// System-enforced Title Case: "python program" → "Python Program"
+function initcap(s: string): string {
+  return s.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+interface DraftQuestionIn {
+  type: "mcq" | "true_false" | "fill_blank" | "match";
+  question: string;
+  marks: number;
+  difficulty?: "easy" | "medium" | "hard";
+  options?: { A?: string; B?: string; C?: string; D?: string };
+  correct?: string;
+  pairs?: { left: string; right: string }[];
+}
+
+Deno.serve(async (req: Request) => {
+  const preflight = handlePreflight(req);
+  if (preflight) return preflight;
+
+  const user = requireAuth(req, "teacher");
+  if (!user) return json({ error: "Not logged in." }, 401);
+
+  const url = new URL(req.url);
+  const path = url.pathname.replace(/^\/teacher/, "");
+  const mcqIdMatch = path.match(/^\/mcq\/(\d+)$/);
+  const mcqActionMatch = path.match(/^\/mcq\/(\d+)\/(upload|close|results|label)$/);
+  const shortIdMatch = path.match(/^\/short\/(\d+)$/);
+  const shortActionMatch = path.match(/^\/short\/(\d+)\/(upload|close|results|label)$/);
+  const groupIdMatch = path.match(/^\/group\/([\w-]+)$/);
+  const groupActionMatch = path.match(/^\/group\/([\w-]+)\/(upload|close|results|label)$/);
+
+  try {
+    if (req.method === "POST" && path === "/mcq/generate") return await generate(req);
+    if (req.method === "POST" && path === "/mcq/save") return await saveMcq(req, user.id);
+    if (req.method === "GET" && path === "/mcq") return await listMcqSets(user.id);
+    if (req.method === "GET" && path === "/scores/detailed") return await detailedScores(user.id);
+
+    if (mcqIdMatch) {
+      const [, id] = mcqIdMatch;
+      if (req.method === "GET") return await getMcqSet(id, user.id);
+      if (req.method === "PUT") return await updateMcqSet(req, id, user.id);
+      if (req.method === "DELETE") return await deleteSet("mcq_sets", id, user.id);
+    }
+    if (mcqActionMatch) {
+      const [, id, action] = mcqActionMatch;
+      if (req.method === "POST" && action === "upload") return await openSet("mcq_sets", id, user.id);
+      if (req.method === "POST" && action === "close") return await closeSet("mcq_sets", id, user.id);
+      if (req.method === "GET" && action === "results") return await liveResults(id, user.id);
+      if (req.method === "PATCH" && action === "label") return await relabelSet("mcq_sets", req, id, user.id);
+    }
+
+    if (req.method === "POST" && path === "/short/generate") return await generateShort(req);
+    if (req.method === "POST" && path === "/short/save") return await saveShort(req, user.id);
+    if (req.method === "GET" && path === "/short") return await listShortSets(user.id);
+    if (shortIdMatch) {
+      const [, id] = shortIdMatch;
+      if (req.method === "GET") return await getShortSet(id, user.id);
+      if (req.method === "PUT") return await updateShortSet(req, id, user.id);
+      if (req.method === "DELETE") return await deleteSet("short_sets", id, user.id);
+    }
+    if (shortActionMatch) {
+      const [, id, action] = shortActionMatch;
+      if (req.method === "POST" && action === "upload") return await openSet("short_sets", id, user.id);
+      if (req.method === "POST" && action === "close") return await closeSet("short_sets", id, user.id);
+      if (req.method === "GET" && action === "results") return await shortResults(id, user.id);
+      if (req.method === "PATCH" && action === "label") return await relabelSet("short_sets", req, id, user.id);
+    }
+
+    if (req.method === "PATCH" && path === "/rename-subject") return await renameSubject(req, user.id);
+
+    if (req.method === "POST" && path === "/paper/save") return await saveComboPaper(req, user.id);
+    if (groupIdMatch) {
+      const [, groupId] = groupIdMatch;
+      if (req.method === "GET") return await getGroup(groupId, user.id);
+      if (req.method === "DELETE") return await groupDelete(groupId, user.id);
+    }
+    if (groupActionMatch) {
+      const [, groupId, action] = groupActionMatch;
+      if (req.method === "POST" && action === "upload") return await groupUpload(groupId, user.id);
+      if (req.method === "POST" && action === "close") return await groupClose(groupId, user.id);
+      if (req.method === "GET" && action === "results") return await groupResults(groupId, user.id);
+      if (req.method === "PATCH" && action === "label") return await groupLabel(req, groupId, user.id);
+    }
+
+    return json({ error: "Not found." }, 404);
+  } catch (err) {
+    console.error(err);
+    return json({ error: "Something went wrong. Please try again." }, 500);
+  }
+});
+
+// ---------- MCQ-family ----------
+
+async function generate(req: Request) {
+  const body = await req.json().catch(() => ({}));
+  const sourceText = (body.text || "").toString();
+  const difficulty = (body.difficulty || "medium") as "easy" | "medium" | "hard";
+  const typeCounts = (body.typeCounts || {}) as TypeCounts;
+
+  if (!sourceText || sourceText.trim().length < 20) {
+    return json({ error: "Please paste more text - at least a full paragraph." }, 400);
+  }
+  try {
+    const questions = await generateQuestionsFromText(sourceText, typeCounts, difficulty);
+    return json({ questions });
+  } catch (err) {
+    return json({ error: (err as Error).message || "Could not generate questions." }, 500);
+  }
+}
+
+async function insertQuestions(setId: number, questions: DraftQuestionIn[]) {
+  for (let i = 0; i < questions.length; i++) {
+    const q = questions[i];
+    const opts = q.options || {};
+    await query(
+      `INSERT INTO mcq_questions
+        (mcq_set_id, question_text, option_a, option_b, option_c, option_d,
+         correct_option, question_type, marks, difficulty, match_pairs, position)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [
+        setId,
+        q.question,
+        opts.A ?? null,
+        opts.B ?? null,
+        opts.C ?? null,
+        opts.D ?? null,
+        q.type === "match" ? null : q.correct ?? null,
+        q.type,
+        q.marks || 1,
+        q.difficulty || "medium",
+        q.type === "match" ? JSON.stringify(q.pairs || []) : null,
+        i,
+      ]
+    );
+  }
+}
+
+function validateQuestions(questions: unknown): questions is DraftQuestionIn[] {
+  if (!Array.isArray(questions) || questions.length === 0) return false;
+  return questions.every((q: DraftQuestionIn) => {
+    if (!["mcq", "true_false", "fill_blank", "match"].includes(q.type)) return false;
+    if (!q.question) return false;
+    if (q.type === "mcq" && (!q.options?.A || !q.options?.B || !q.options?.C || !q.options?.D || !q.correct)) return false;
+    if (q.type === "true_false" && (!q.options?.A || !q.options?.B || !q.correct)) return false;
+    if (q.type === "fill_blank" && !q.correct) return false;
+    if (q.type === "match" && (!Array.isArray(q.pairs) || q.pairs.length < 2)) return false;
+    return true;
+  });
+}
+
+async function saveMcq(req: Request, teacherId: number) {
+  const body = await req.json().catch(() => ({}));
+  const raw = body as { subject?: string; topic?: string; semester?: string; questions?: unknown };
+  const subject = initcap((raw.subject || "").toString().trim());
+  const topic   = initcap((raw.topic   || "").toString().trim());
+  const semester = (raw.semester || "").toString().trim();
+  if (!subject || !topic || !semester || !validateQuestions(raw.questions)) {
+    return json({ error: "Subject, topic, semester and at least one valid question are required." }, 400);
+  }
+
+  const setResult = await query(
+    "INSERT INTO mcq_sets (teacher_id, subject, topic, semester, title, status) VALUES ($1,$2,$3,$4,$5,'ready') RETURNING id",
+    [teacherId, subject, topic, semester, subject]
+  );
+  const setId = setResult.rows[0].id;
+  await insertQuestions(setId, raw.questions as DraftQuestionIn[]);
+  return json({ id: setId });
+}
+
+async function listMcqSets(teacherId: number) {
+  const result = await query(
+    `SELECT ms.id, ms.subject, ms.topic, ms.semester, ms.title, ms.status, ms.created_at, ms.opened_at, ms.closed_at,
+            ms.group_id,
+            COALESCE(SUM(mq.marks), 0) AS total_marks
+     FROM mcq_sets ms LEFT JOIN mcq_questions mq ON mq.mcq_set_id = ms.id
+     WHERE ms.teacher_id=$1
+     GROUP BY ms.id
+     ORDER BY COALESCE(ms.opened_at, ms.created_at) DESC`,
+    [teacherId]
+  );
+  return json({ sets: result.rows });
+}
+
+async function getMcqSet(id: string, teacherId: number) {
+  const setResult = await query("SELECT * FROM mcq_sets WHERE id=$1 AND teacher_id=$2", [id, teacherId]);
+  if (setResult.rowCount === 0) return json({ error: "MCQ set not found." }, 404);
+
+  const questions = await query(
+    `SELECT id, question_text, option_a, option_b, option_c, option_d,
+            correct_option, question_type, marks, difficulty, match_pairs, position
+     FROM mcq_questions WHERE mcq_set_id=$1 ORDER BY position`,
+    [id]
+  );
+  return json({ set: setResult.rows[0], questions: questions.rows });
+}
+
+// Editing allowed regardless of status so teachers can fix questions/answers post-upload.
+async function updateMcqSet(req: Request, id: string, teacherId: number) {
+  const body = await req.json().catch(() => ({}));
+  const raw = body as { subject?: string; topic?: string; semester?: string; questions?: unknown };
+  const subject = initcap((raw.subject || "").toString().trim());
+  const topic   = initcap((raw.topic   || "").toString().trim());
+  const semester = (raw.semester || "").toString().trim();
+  if (!subject || !topic || !semester || !validateQuestions(raw.questions)) {
+    return json({ error: "Subject, topic, semester and at least one valid question are required." }, 400);
+  }
+  const setCheck = await query("SELECT teacher_id FROM mcq_sets WHERE id=$1 AND teacher_id=$2", [id, teacherId]);
+  if (setCheck.rowCount === 0) return json({ error: "MCQ set not found." }, 404);
+
+  await query("UPDATE mcq_sets SET subject=$1, topic=$2, semester=$3, title=$1 WHERE id=$4", [subject, topic, semester, id]);
+  await query("DELETE FROM mcq_questions WHERE mcq_set_id=$1", [id]);
+  await insertQuestions(Number(id), raw.questions as DraftQuestionIn[]);
+  return json({ ok: true });
+}
+
+// Fixes a typo'd subject/topic ONLY (semester/date/marks are not touched).
+// Title Case is enforced automatically by the system on every save.
+// After fixing this paper, also sweeps all other papers of the same teacher
+// whose subject case-insensitively matches the OLD subject, consolidating
+// variants like "python" and "Python" into the corrected canonical name.
+async function relabelSet(table: "mcq_sets" | "short_sets", req: Request, id: string, teacherId: number) {
+  const body = await req.json().catch(() => ({}));
+  const subject = initcap((body.subject || "").toString().trim());
+  const topic = initcap((body.topic || "").toString().trim());
+  if (!subject || !topic) {
+    return json({ error: "Subject and topic are required." }, 400);
+  }
+
+  // First, fetch the old subject so we know what to sweep.
+  const existing = await query(
+    `SELECT subject FROM ${table} WHERE id=$1 AND teacher_id=$2`,
+    [id, teacherId]
+  );
+  if (existing.rowCount === 0) return json({ error: "Paper not found." }, 404);
+  const oldSubjectLower = (existing.rows[0].subject || "").toLowerCase();
+
+  // Update the specific paper (topic + subject).
+  await query(
+    `UPDATE ${table} SET subject=$1, topic=$2, title=$1 WHERE id=$3 AND teacher_id=$4`,
+    [subject, topic, id, teacherId]
+  );
+
+  // Sweep all other papers by this teacher that share the same old subject
+  // (case-insensitive) — merges "python", "Python", etc. into the corrected name.
+  const newSubjectLower = subject.toLowerCase();
+  for (const t of ["mcq_sets", "short_sets"] as const) {
+    await query(
+      `UPDATE ${t} SET subject=$1, title=$1
+       WHERE teacher_id=$2 AND LOWER(TRIM(subject)) IN ($3, $4) AND id != $5`,
+      [subject, teacherId, oldSubjectLower, newSubjectLower, id]
+    );
+  }
+
+  return json({ ok: true });
+}
+
+// Renames a subject across ALL papers (mcq + short) for this teacher.
+// "python", "Python", "Pyhton" → all merge into newSubject (Title Cased).
+// Uses a single pass: matches any row where LOWER(subject) equals either
+// the lower-cased old name OR the lower-cased new name, so all variants
+// (e.g. "python" and "Python") are swept in one query.
+async function renameSubject(req: Request, teacherId: number) {
+  const body = await req.json().catch(() => ({}));
+  const newSubject = initcap((body.newSubject || "").toString().trim()); // Title Case enforced
+  const oldSubject = (body.oldSubject || "").toString().trim();          // keep original for matching
+  if (!oldSubject || !newSubject) {
+    return json({ error: "oldSubject and newSubject are required." }, 400);
+  }
+  const newLower = newSubject.toLowerCase();
+  const oldLower = oldSubject.toLowerCase();
+
+  // Sweep any row whose subject case-insensitively matches either the old
+  // label or the new label — this collapses "python" + "Python" + any other
+  // variant into one canonical Title-Cased name in a single query.
+  for (const table of ["mcq_sets", "short_sets"] as const) {
+    await query(
+      `UPDATE ${table} SET subject=$1, title=$1
+       WHERE teacher_id=$2 AND LOWER(TRIM(subject)) IN ($3, $4)`,
+      [newSubject, teacherId, oldLower, newLower]
+    );
+  }
+  return json({ ok: true });
+}
+
+async function deleteSet(table: "mcq_sets" | "short_sets", id: string, teacherId: number) {
+  // Cascades to questions/attempts via the FKs' ON DELETE CASCADE. The
+  // frontend is expected to confirm with the teacher once before calling
+  // this - there's no undo on the server side.
+  const result = await query(`DELETE FROM ${table} WHERE id=$1 AND teacher_id=$2 RETURNING id`, [id, teacherId]);
+  if (result.rowCount === 0) return json({ error: "Paper not found." }, 404);
+  return json({ ok: true });
+}
+
+async function openSet(table: "mcq_sets" | "short_sets", id: string, teacherId: number) {
+  const result = await query(
+    `UPDATE ${table} SET status='live', opened_at=now() WHERE id=$1 AND teacher_id=$2 RETURNING id`,
+    [id, teacherId]
+  );
+  if (result.rowCount === 0) return json({ error: "Paper not found." }, 404);
+  return json({ ok: true });
+}
+
+async function closeSet(table: "mcq_sets" | "short_sets", id: string, teacherId: number) {
+  const result = await query(
+    `UPDATE ${table} SET status='closed', closed_at=now() WHERE id=$1 AND teacher_id=$2 RETURNING id`,
+    [id, teacherId]
+  );
+  if (result.rowCount === 0) return json({ error: "Paper not found." }, 404);
+  return json({ ok: true });
+}
+
+async function liveResults(id: string, teacherId: number) {
+  const setCheck = await query("SELECT id FROM mcq_sets WHERE id=$1 AND teacher_id=$2", [id, teacherId]);
+  if (setCheck.rowCount === 0) return json({ error: "MCQ set not found." }, 404);
+
+  const result = await query(
+    `SELECT s.rollno, s.name, a.score, a.total, a.submitted_at
+     FROM attempts a JOIN students s ON s.id = a.student_id
+     WHERE a.mcq_set_id = $1
+     ORDER BY a.score DESC, a.submitted_at ASC`,
+    [id]
+  );
+  return json({ results: result.rows });
+}
+
+// One row per (student, test) - across BOTH the MCQ-family attempts table
+// AND the short-answer attempts table, so a combined paper's short-answer
+// half counts toward the same subject/topic column as its MCQ half (they
+// share the same subject/topic text, set at creation time). The frontend
+// builds the Subject Performance view (pick a subject, then a table broken
+// down topic by topic) and the Overall Performance view (every subject
+// summed per student) from this same feed. avg is always shown before the
+// breakdown columns, and rows are sorted with the best performer on top -
+// both views do that client-side.
+async function detailedScores(teacherId: number) {
+  const result = await query(
+    `SELECT ms.subject, ms.topic, ms.semester, ms.opened_at,
+            ('mcq-' || ms.id) AS mcq_set_id,
+            s.rollno, s.name, a.score, a.total, a.submitted_at
+     FROM attempts a
+     JOIN mcq_sets ms ON ms.id = a.mcq_set_id
+     JOIN students s ON s.id = a.student_id
+     WHERE ms.teacher_id = $1
+     UNION ALL
+     SELECT ss.subject, ss.topic, ss.semester, ss.opened_at,
+            ('short-' || ss.id) AS mcq_set_id,
+            s.rollno, s.name, sa.score, sa.total, sa.submitted_at
+     FROM short_attempts sa
+     JOIN short_sets ss ON ss.id = sa.short_set_id
+     JOIN students s ON s.id = sa.student_id
+     WHERE ss.teacher_id = $1
+     ORDER BY opened_at DESC`,
+    [teacherId]
+  );
+  return json({ attempts: result.rows });
+}
+
+// ---------- Short-answer (photo upload, AI-graded) ----------
+
+async function generateShort(req: Request) {
+  const body = await req.json().catch(() => ({}));
+  const sourceText = (body.text || "").toString();
+  const count = Number(body.count) || 3;
+  const difficulty = (body.difficulty || "medium") as "easy" | "medium" | "hard";
+
+  if (!sourceText || sourceText.trim().length < 20) {
+    return json({ error: "Please paste more text - at least a full paragraph." }, 400);
+  }
+  try {
+    const questions = await generateShortAnswerQuestions(sourceText, count, difficulty);
+    return json({ questions });
+  } catch (err) {
+    return json({ error: (err as Error).message || "Could not generate questions." }, 500);
+  }
+}
+
+async function saveShort(req: Request, teacherId: number) {
+  const body = await req.json().catch(() => ({}));
+  const raw = body as { subject?: string; topic?: string; semester?: string; questions?: Array<{ text: string; maxMarks: number }> };
+  const subject  = initcap((raw.subject  || "").toString().trim());
+  const topic    = initcap((raw.topic    || "").toString().trim());
+  const semester = (raw.semester || "").toString().trim();
+  if (!subject || !topic || !semester || !Array.isArray(raw.questions) || raw.questions.length === 0) {
+    return json({ error: "Subject, topic, semester and at least one question are required." }, 400);
+  }
+  for (const q of raw.questions) {
+    if (!q.text || !Number.isFinite(Number(q.maxMarks)) || Number(q.maxMarks) <= 0) {
+      return json({ error: "Every question needs text and a positive mark value." }, 400);
+    }
+  }
+
+  const setResult = await query(
+    "INSERT INTO short_sets (teacher_id, subject, topic, semester, title, status) VALUES ($1,$2,$3,$4,$5,'ready') RETURNING id",
+    [teacherId, subject, topic, semester, subject]
+  );
+  const setId = setResult.rows[0].id;
+
+  for (let i = 0; i < raw.questions.length; i++) {
+    const q = raw.questions[i];
+    await query(
+      "INSERT INTO short_questions (short_set_id, question_text, max_marks, position) VALUES ($1,$2,$3,$4)",
+      [setId, q.text, q.maxMarks, i]
+    );
+  }
+  return json({ id: setId });
+}
+
+async function listShortSets(teacherId: number) {
+  const result = await query(
+    `SELECT id, subject, topic, semester, title, status, created_at, opened_at, closed_at, group_id
+     FROM short_sets WHERE teacher_id=$1
+     ORDER BY COALESCE(opened_at, created_at) DESC`,
+    [teacherId]
+  );
+  return json({ sets: result.rows });
+}
+
+async function getShortSet(id: string, teacherId: number) {
+  const setResult = await query("SELECT * FROM short_sets WHERE id=$1 AND teacher_id=$2", [id, teacherId]);
+  if (setResult.rowCount === 0) return json({ error: "Paper not found." }, 404);
+
+  const questions = await query(
+    "SELECT id, question_text, max_marks, position FROM short_questions WHERE short_set_id=$1 ORDER BY position",
+    [id]
+  );
+  return json({ set: setResult.rows[0], questions: questions.rows });
+}
+
+async function updateShortSet(req: Request, id: string, teacherId: number) {
+  const body = await req.json().catch(() => ({}));
+  const { subject, topic, semester, questions } = body as {
+    subject?: string;
+    topic?: string;
+    semester?: string;
+    questions?: Array<{ text: string; maxMarks: number }>;
+  };
+  if (!subject || !topic || !semester || !Array.isArray(questions) || questions.length === 0) {
+    return json({ error: "Subject, topic, semester and at least one question are required." }, 400);
+  }
+
+  const setCheck = await query("SELECT status FROM short_sets WHERE id=$1 AND teacher_id=$2", [id, teacherId]);
+  if (setCheck.rowCount === 0) return json({ error: "Paper not found." }, 404);
+  if (setCheck.rows[0].status !== "ready") {
+    return json({ error: "This paper has already been uploaded and can no longer be edited." }, 409);
+  }
+
+  await query("UPDATE short_sets SET subject=$1, topic=$2, semester=$3, title=$1 WHERE id=$4", [subject, topic, semester, id]);
+  await query("DELETE FROM short_questions WHERE short_set_id=$1", [id]);
+  for (let i = 0; i < questions.length; i++) {
+    const q = questions[i];
+    await query(
+      "INSERT INTO short_questions (short_set_id, question_text, max_marks, position) VALUES ($1,$2,$3,$4)",
+      [id, q.text, q.maxMarks, i]
+    );
+  }
+  return json({ ok: true });
+}
+
+async function shortResults(id: string, teacherId: number) {
+  const setCheck = await query("SELECT id FROM short_sets WHERE id=$1 AND teacher_id=$2", [id, teacherId]);
+  if (setCheck.rowCount === 0) return json({ error: "Paper not found." }, 404);
+
+  const result = await query(
+    `SELECT s.rollno, s.name, a.score, a.total, a.submitted_at
+     FROM short_attempts a JOIN students s ON s.id = a.student_id
+     WHERE a.short_set_id = $1
+     ORDER BY a.score DESC, a.submitted_at ASC`,
+    [id]
+  );
+  return json({ results: result.rows });
+}
+
+// ---------- Combined papers (MCQ-family + short-answer, one teacher action) ----------
+//
+// A paper built on the "New Paper" screen with BOTH some MCQ-family
+// questions AND some short-answer questions is saved as one mcq_sets row
+// and one short_sets row *sharing the same group_id* - two rows in the
+// database (because grading works completely differently for each), but
+// exactly one thing from the teacher's point of view: one entry on the
+// dashboard, one Upload, one Close, one Delete, one subject/topic fix.
+// A solo MCQ-only or short-only paper never gets a group_id and keeps
+// using the plain /mcq/* or /short/* routes above.
+
+async function saveComboPaper(req: Request, teacherId: number) {
+  const body = await req.json().catch(() => ({}));
+  const raw = body as {
+    subject?: string;
+    topic?: string;
+    semester?: string;
+    questions?: unknown; // MCQ-family, optional
+    shortQuestions?: Array<{ text: string; maxMarks: number }>; // optional
+  };
+  const subject = initcap((raw.subject || "").toString().trim());
+  const topic = initcap((raw.topic || "").toString().trim());
+  const semester = (raw.semester || "").toString().trim();
+  if (!subject || !topic || !semester) {
+    return json({ error: "Subject, topic and semester are required." }, 400);
+  }
+
+  const hasMcq = validateQuestions(raw.questions);
+  const shortQs = (Array.isArray(raw.shortQuestions) ? raw.shortQuestions : []).filter(
+    (q) => q.text && Number.isFinite(Number(q.maxMarks)) && Number(q.maxMarks) > 0
+  );
+  if (!hasMcq && shortQs.length === 0) {
+    return json({ error: "Add at least one MCQ-family question or one short-answer question." }, 400);
+  }
+
+  // Only actually needs a shared group when BOTH halves are present - a
+  // solo half just gets saved as a normal ungrouped paper.
+  const groupId = hasMcq && shortQs.length > 0 ? crypto.randomUUID() : null;
+
+  let mcqId: number | null = null;
+  let shortId: number | null = null;
+
+  if (hasMcq) {
+    const setResult = await query(
+      "INSERT INTO mcq_sets (teacher_id, subject, topic, semester, title, status, group_id) VALUES ($1,$2,$3,$4,$5,'ready',$6) RETURNING id",
+      [teacherId, subject, topic, semester, subject, groupId]
+    );
+    mcqId = setResult.rows[0].id;
+    await insertQuestions(mcqId as number, raw.questions as DraftQuestionIn[]);
+  }
+
+  if (shortQs.length > 0) {
+    const setResult = await query(
+      "INSERT INTO short_sets (teacher_id, subject, topic, semester, title, status, group_id) VALUES ($1,$2,$3,$4,$5,'ready',$6) RETURNING id",
+      [teacherId, subject, topic, semester, subject, groupId]
+    );
+    shortId = setResult.rows[0].id;
+    for (let i = 0; i < shortQs.length; i++) {
+      const q = shortQs[i];
+      await query(
+        "INSERT INTO short_questions (short_set_id, question_text, max_marks, position) VALUES ($1,$2,$3,$4)",
+        [shortId, q.text, q.maxMarks, i]
+      );
+    }
+  }
+
+  return json({ groupId, mcqId, shortId });
+}
+
+async function ownedGroupSets(groupId: string, teacherId: number) {
+  const mcq = await query("SELECT * FROM mcq_sets WHERE group_id=$1 AND teacher_id=$2", [groupId, teacherId]);
+  const short = await query("SELECT * FROM short_sets WHERE group_id=$1 AND teacher_id=$2", [groupId, teacherId]);
+  return { mcq: mcq.rows[0] || null, short: short.rows[0] || null };
+}
+
+async function getGroup(groupId: string, teacherId: number) {
+  const { mcq, short } = await ownedGroupSets(groupId, teacherId);
+  if (!mcq && !short) return json({ error: "Paper not found." }, 404);
+
+  const mcqQuestions = mcq
+    ? (await query(
+        `SELECT id, question_text, option_a, option_b, option_c, option_d,
+                correct_option, question_type, marks, difficulty, match_pairs, position
+         FROM mcq_questions WHERE mcq_set_id=$1 ORDER BY position`,
+        [mcq.id]
+      )).rows
+    : [];
+  const shortQuestions = short
+    ? (await query(
+        "SELECT id, question_text, max_marks, position FROM short_questions WHERE short_set_id=$1 ORDER BY position",
+        [short.id]
+      )).rows
+    : [];
+
+  return json({
+    mcq: mcq ? { set: mcq, questions: mcqQuestions } : null,
+    short: short ? { set: short, questions: shortQuestions } : null,
+  });
+}
+
+async function groupUpload(groupId: string, teacherId: number) {
+  const { mcq, short } = await ownedGroupSets(groupId, teacherId);
+  if (!mcq && !short) return json({ error: "Paper not found." }, 404);
+  if (mcq) await query("UPDATE mcq_sets SET status='live', opened_at=now() WHERE id=$1", [mcq.id]);
+  if (short) await query("UPDATE short_sets SET status='live', opened_at=now() WHERE id=$1", [short.id]);
+  return json({ ok: true });
+}
+
+async function groupClose(groupId: string, teacherId: number) {
+  const { mcq, short } = await ownedGroupSets(groupId, teacherId);
+  if (!mcq && !short) return json({ error: "Paper not found." }, 404);
+  if (mcq) await query("UPDATE mcq_sets SET status='closed', closed_at=now() WHERE id=$1", [mcq.id]);
+  if (short) await query("UPDATE short_sets SET status='closed', closed_at=now() WHERE id=$1", [short.id]);
+  return json({ ok: true });
+}
+
+async function groupDelete(groupId: string, teacherId: number) {
+  const { mcq, short } = await ownedGroupSets(groupId, teacherId);
+  if (!mcq && !short) return json({ error: "Paper not found." }, 404);
+  if (mcq) await query("DELETE FROM mcq_sets WHERE id=$1", [mcq.id]);
+  if (short) await query("DELETE FROM short_sets WHERE id=$1", [short.id]);
+  return json({ ok: true });
+}
+
+async function groupLabel(req: Request, groupId: string, teacherId: number) {
+  const body = await req.json().catch(() => ({}));
+  const subject = initcap((body.subject || "").toString().trim());
+  const topic = initcap((body.topic || "").toString().trim());
+  if (!subject || !topic) return json({ error: "Subject and topic are required." }, 400);
+
+  const { mcq, short } = await ownedGroupSets(groupId, teacherId);
+  if (!mcq && !short) return json({ error: "Paper not found." }, 404);
+  const oldSubjectLower = ((mcq || short).subject || "").toLowerCase();
+
+  if (mcq) await query("UPDATE mcq_sets SET subject=$1, topic=$2, title=$1 WHERE id=$3", [subject, topic, mcq.id]);
+  if (short) await query("UPDATE short_sets SET subject=$1, topic=$2, title=$1 WHERE id=$3", [subject, topic, short.id]);
+
+  // Same cross-paper sweep as relabelSet() - merges any other paper of this
+  // teacher sharing the old (or already-typo'd) subject name.
+  const newSubjectLower = subject.toLowerCase();
+  for (const t of ["mcq_sets", "short_sets"] as const) {
+    await query(
+      `UPDATE ${t} SET subject=$1, title=$1
+       WHERE teacher_id=$2 AND LOWER(TRIM(subject)) IN ($3, $4) AND COALESCE(group_id, '') != $5`,
+      [subject, teacherId, oldSubjectLower, newSubjectLower, groupId]
+    );
+  }
+  return json({ ok: true });
+}
+
+// Merged results: every student who has either an MCQ attempt or a
+// short-answer attempt (or both) under this group, with both halves' score
+// shown side by side plus a combined total - one scoreboard for one paper.
+async function groupResults(groupId: string, teacherId: number) {
+  const { mcq, short } = await ownedGroupSets(groupId, teacherId);
+  if (!mcq && !short) return json({ error: "Paper not found." }, 404);
+
+  const mcqRows = mcq
+    ? (await query(
+        `SELECT s.rollno, s.name, a.score, a.total
+         FROM attempts a JOIN students s ON s.id = a.student_id
+         WHERE a.mcq_set_id = $1`,
+        [mcq.id]
+      )).rows
+    : [];
+  const shortRows = short
+    ? (await query(
+        `SELECT s.rollno, s.name, a.score, a.total
+         FROM short_attempts a JOIN students s ON s.id = a.student_id
+         WHERE a.short_set_id = $1`,
+        [short.id]
+      )).rows
+    : [];
+
+  const byRoll = new Map<string, { rollno: string; name: string; mcqScore: number; mcqTotal: number; shortScore: number; shortTotal: number }>();
+  for (const r of mcqRows) {
+    byRoll.set(r.rollno, { rollno: r.rollno, name: r.name, mcqScore: Number(r.score), mcqTotal: Number(r.total), shortScore: 0, shortTotal: 0 });
+  }
+  for (const r of shortRows) {
+    const row = byRoll.get(r.rollno) || { rollno: r.rollno, name: r.name, mcqScore: 0, mcqTotal: 0, shortScore: 0, shortTotal: 0 };
+    row.shortScore = Number(r.score);
+    row.shortTotal = Number(r.total);
+    byRoll.set(r.rollno, row);
+  }
+
+  const results = Array.from(byRoll.values())
+    .map((r) => ({ ...r, score: r.mcqScore + r.shortScore, total: r.mcqTotal + r.shortTotal }))
+    .sort((a, b) => b.score - a.score);
+
+  return json({ results });
+}
