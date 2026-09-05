@@ -1,9 +1,10 @@
-// Primary model, and the model we fall back to when the primary one is
+// Primary model, and the models we fall back to when the primary one is
 // out of quota (a 429 / RESOURCE_EXHAUSTED response). Every call in this
-// file goes through callGemini() below, so both models are always tried
+// file goes through callGemini() below, so all models are always tried
 // the same way regardless of which feature is calling in.
 const MODEL_PRIMARY = "gemini-3.6-flash";
-const MODEL_FALLBACK = "gemini-2.5-flash-lite";
+const MODEL_FALLBACK = "gemini-3.5-flash-lite";
+const MODEL_SECONDARY_FALLBACK = "gemini-3.1-flash-lite";
 
 function isQuotaExhausted(status: number, errText: string): boolean {
   if (status === 429) return true;
@@ -11,15 +12,31 @@ function isQuotaExhausted(status: number, errText: string): boolean {
   return lower.includes("resource_exhausted") || lower.includes("quota");
 }
 
-// Calls the Gemini generateContent endpoint with the given request body,
-// trying MODEL_PRIMARY first and MODEL_FALLBACK only if the primary comes
-// back exhausted (rate-limited / out of quota) - any other error (bad
-// request, malformed prompt, etc) is NOT retried on the fallback, since
-// retrying wouldn't fix it.
-async function callGemini(apiKey: string, body: Record<string, unknown>): Promise<string> {
-  let lastError: Error | null = null;
+function getRemainingQuota(resp: Response): string | null {
+  const remaining = resp.headers.get("x-ratelimit-remaining");
+  const limit = resp.headers.get("x-ratelimit-limit");
+  const reset = resp.headers.get("x-ratelimit-reset");
+  if (remaining !== null || limit !== null || reset !== null) {
+    const parts = [
+      remaining ? `remaining=${remaining}` : null,
+      limit ? `limit=${limit}` : null,
+      reset ? `reset=${reset}` : null,
+    ].filter(Boolean);
+    return parts.join(", ");
+  }
+  return null;
+}
 
-  for (const model of [MODEL_PRIMARY, MODEL_FALLBACK]) {
+// Calls the Gemini generateContent endpoint with the given request body,
+// trying MODEL_PRIMARY, MODEL_FALLBACK, and MODEL_SECONDARY_FALLBACK in
+// order when a model is exhausted (rate-limited / out of quota). Any other
+// error (bad request, malformed prompt, 404 model not found, etc) is NOT
+// retried on the next model, since retrying wouldn't fix it.
+async function callGemini(apiKey: string, body: Record<string, unknown>): Promise<string> {
+  const models = [MODEL_PRIMARY, MODEL_FALLBACK, MODEL_SECONDARY_FALLBACK];
+  const errors: { model: string; status: number; text: string; quota: string | null }[] = [];
+
+  for (const model of models) {
     const resp = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
       {
@@ -35,22 +52,31 @@ async function callGemini(apiKey: string, body: Record<string, unknown>): Promis
     if (resp.ok) {
       const data = await resp.json();
       const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!text) throw new Error("Gemini returned no content.");
+      if (!text) throw new Error(`Gemini model ${model} returned no content.`);
       return text;
     }
 
     const errText = await resp.text();
-    if (isQuotaExhausted(resp.status, errText) && model === MODEL_PRIMARY) {
-      // Primary is exhausted - quietly retry on the lite fallback instead
-      // of failing the request.
-      lastError = new Error(`Gemini API error: ${resp.status} ${errText}`);
+    const quota = getRemainingQuota(resp);
+    const errorEntry = { model, status: resp.status, text: errText, quota };
+
+    if (isQuotaExhausted(resp.status, errText)) {
+      errors.push(errorEntry);
       continue;
     }
-    throw new Error(`Gemini API error: ${resp.status} ${errText}`);
+
+    throw new Error(
+      `Gemini API error on model ${model}: ${resp.status} ${errText}${quota ? ` [quota: ${quota}]` : ""}`
+    );
   }
 
-  // Both models failed with quota errors.
-  throw lastError || new Error("Gemini API is currently unavailable.");
+  const parts = errors.map(
+    (e) =>
+      `- ${e.model}: ${e.status} ${e.text}${e.quota ? ` [quota: ${e.quota}]` : ""}`
+  );
+  throw new Error(
+    `All Gemini models exhausted. Attempted:\n${parts.join("\n")}`
+  );
 }
 
 export interface TypeCounts {
