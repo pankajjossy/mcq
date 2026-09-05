@@ -1,10 +1,5 @@
-// Primary model, and the models we fall back to when the primary one is
-// out of quota (a 429 / RESOURCE_EXHAUSTED response). Every call in this
-// file goes through callGemini() below, so all models are always tried
-// the same way regardless of which feature is calling in.
-const MODEL_PRIMARY = "gemini-3.6-flash";
-const MODEL_FALLBACK = "gemini-3.5-flash-lite";
-const MODEL_SECONDARY_FALLBACK = "gemini-3.1-flash-lite";
+// Gemini model used for all requests.
+const MODEL = "gemini-3.1-flash-lite";
 
 function isQuotaExhausted(status: number, errText: string): boolean {
   if (status === 429) return true;
@@ -27,55 +22,31 @@ function getRemainingQuota(resp: Response): string | null {
   return null;
 }
 
-// Calls the Gemini generateContent endpoint with the given request body,
-// trying MODEL_PRIMARY, MODEL_FALLBACK, and MODEL_SECONDARY_FALLBACK in
-// order when a model is exhausted (rate-limited / out of quota). Any other
-// error (bad request, malformed prompt, 404 model not found, etc) is NOT
-// retried on the next model, since retrying wouldn't fix it.
+// Calls the Gemini generateContent endpoint with the given request body.
 async function callGemini(apiKey: string, body: Record<string, unknown>): Promise<string> {
-  const models = [MODEL_PRIMARY, MODEL_FALLBACK, MODEL_SECONDARY_FALLBACK];
-  const errors: { model: string; status: number; text: string; quota: string | null }[] = [];
-
-  for (const model of models) {
-    const resp = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": apiKey,
-        },
-        body: JSON.stringify(body),
-      }
-    );
-
-    if (resp.ok) {
-      const data = await resp.json();
-      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!text) throw new Error(`Gemini model ${model} returned no content.`);
-      return text;
+  const resp = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey,
+      },
+      body: JSON.stringify(body),
     }
+  );
 
-    const errText = await resp.text();
-    const quota = getRemainingQuota(resp);
-    const errorEntry = { model, status: resp.status, text: errText, quota };
-
-    if (isQuotaExhausted(resp.status, errText)) {
-      errors.push(errorEntry);
-      continue;
-    }
-
-    throw new Error(
-      `Gemini API error on model ${model}: ${resp.status} ${errText}${quota ? ` [quota: ${quota}]` : ""}`
-    );
+  if (resp.ok) {
+    const data = await resp.json();
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) throw new Error(`Gemini model ${MODEL} returned no content.`);
+    return text;
   }
 
-  const parts = errors.map(
-    (e) =>
-      `- ${e.model}: ${e.status} ${e.text}${e.quota ? ` [quota: ${e.quota}]` : ""}`
-  );
+  const errText = await resp.text();
+  const quota = getRemainingQuota(resp);
   throw new Error(
-    `All Gemini models exhausted. Attempted:\n${parts.join("\n")}`
+    `Gemini API error on model ${MODEL}: ${resp.status} ${errText}${quota ? ` [quota: ${quota}]` : ""}`
   );
 }
 
