@@ -2,7 +2,7 @@
 // out of quota (a 429 / RESOURCE_EXHAUSTED response). Every call in this
 // file goes through callGemini() below, so both models are always tried
 // the same way regardless of which feature is calling in.
-const MODEL_PRIMARY = "gemini-2.5-flash";
+const MODEL_PRIMARY = "gemini-3.6-flash";
 const MODEL_FALLBACK = "gemini-2.5-flash-lite";
 
 function isQuotaExhausted(status: number, errText: string): boolean {
